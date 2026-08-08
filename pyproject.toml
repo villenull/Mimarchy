@@ -1,0 +1,47 @@
+[project]
+name = "mimarchy"
+version = "0.1.0"
+description = "Omarchy-native LED control for CPU cooler fans, GPU, and the cooler's display"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Diego Huyke" }]
+requires-python = ">=3.11"
+
+# Lower bounds are the versions this is known to run on, capped below the next
+# major so a breaking release cannot silently arrive in a fresh install.
+#
+# All three are load-bearing, verified against actual imports rather than assumed:
+#   openrgb-python  rgb.py talks to the OpenRGB SDK server; it is the only path
+#                   to the GPU, which is reached over I2C on the card
+#   hid             display.py writes 64-byte frames to the cooler's hidraw node
+#   textual         the TUI
+dependencies = [
+    "openrgb-python>=0.3.6,<0.4",
+    "hid>=1.0.9,<2",
+    "textual>=8.2.8,<9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.1.1,<10",
+    "pytest-asyncio>=1.4.0,<2",
+]
+
+[project.urls]
+Homepage = "https://github.com/villenull/mimarchy"
+
+[project.scripts]
+mimarchy-tui = "mimarchy.tui:main"
+mimarchy-displayd = "mimarchy.displayd:main"
+mimarchy-lightd = "mimarchy.lightd:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

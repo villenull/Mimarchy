@@ -1,0 +1,18 @@
+# Balam Rush Heliux Pro HEX75 CPU cooler display controller.
+#
+# usb.ids mislabels this device as an "MSR-101U magnetic card reader"; it is a
+# no-name microcontroller exposing a vendor-defined 64-byte HID pipe. See
+# a cloned ID also used by USB relay boards.
+#
+# Without this, its /dev/hidraw node is root-only (crw------- root root) and
+# mimarchy cannot write display frames.
+#
+# TAG+="uaccess" is the tidier mechanism (session-scoped ACL, as the AURA
+# controller gets), but logind only applies that ACL on a real device-add, so
+# it does not take effect on `udevadm trigger` and left the node unreadable
+# here. GROUP/MODE applies immediately and unconditionally, so both are set:
+# uaccess for a clean boot-time path, group ownership as the one that reliably
+# works. `input` is used because the account is already a member; no new group
+# and no world-writable node.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="5131", ATTRS{idProduct}=="2007", \
+    TAG+="uaccess", GROUP="input", MODE="0660"

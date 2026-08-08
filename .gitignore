@@ -1,0 +1,14 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Local reverse-engineering scratch, never shipped: a Windows VM with disk
+# images, and the vendor's own binary, which is not ours to redistribute.
+vm/
+Enfriamiento de torre software.exe

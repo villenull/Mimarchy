@@ -1,0 +1,19 @@
+[Unit]
+Description=Render mimarchy lighting effects
+After=openrgb.service
+Wants=openrgb.service
+
+[Service]
+# @BIN@ is substituted with the venv's bin directory by install.sh; the
+# checked-in file is a template, not something to copy verbatim.
+#
+# Effects are rendered in software rather than by the controllers: the board
+# has no speed control, and the two devices animate from independent clocks so
+# they drift out of phase. Rendering both from one clock is the only way to
+# keep them matched — which means lighting only animates while this runs.
+ExecStart=@BIN@/mimarchy-lightd
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

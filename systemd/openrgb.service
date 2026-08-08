@@ -1,0 +1,14 @@
+[Unit]
+Description=OpenRGB SDK server (for mimarchy)
+
+[Service]
+# Only ever start OpenRGB with a restricted detector set — see
+# tools/restrict-openrgb-detectors.py and the README. Its broad GPU/I2C
+# detection hard-freezes this machine (upstream issue #4888) with the Sapphire
+# RX 9070 XT, and this unit is enabled at login, so an unrestricted config
+# would turn that into a freeze on every boot.
+ExecStart=/usr/bin/openrgb --server --server-port 6742
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

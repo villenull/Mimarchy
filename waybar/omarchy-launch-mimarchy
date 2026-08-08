@@ -1,0 +1,5 @@
+#!/bin/bash
+
+# omarchy:summary=Launch the mimarchy TUI (fan/GPU LEDs, CPU display toggle).
+
+exec omarchy-launch-or-focus-tui mimarchy-tui

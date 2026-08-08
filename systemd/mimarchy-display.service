@@ -1,0 +1,20 @@
+[Unit]
+Description=Stream CPU telemetry to the cooler's built-in display
+Documentation=https://github.com/villenull/mimarchy
+
+[Service]
+# @BIN@ is substituted with the venv's bin directory by install.sh; the
+# checked-in file is a template, not something to copy verbatim.
+#
+# The panel has no on/off command — it stays lit only while frames arrive, and
+# blanks 50.35 s after they stop (filmed, reproduced across two 5-trial runs;
+# "a few seconds" here was an unmeasured guess, wrong by an order of magnitude).
+# Starting and stopping this unit is therefore how the display is turned on and
+# off, and stopping it means the panel stays lit for another ~50 s before it goes
+# dark. Sending frames faster does not shorten that.
+ExecStart=@BIN@/mimarchy-displayd --interval 1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
