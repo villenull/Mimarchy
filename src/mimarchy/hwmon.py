@@ -27,16 +27,55 @@ class TempReading:
     celsius: float
 
 
+def snapshot() -> dict:
+    """One `sensors -j` read, to be shared by several readings.
+
+    Each reader below shells out on its own when called bare, which is the
+    right default — a stale temperature is worse than a cheap one, and there is
+    no hidden cache to reason about. But `mimarchy-ctl status` answers all three
+    at once, so calling them bare spawned `sensors` three times per invocation,
+    and the bar widget polls `status` every two seconds while its panel is open.
+    Passing one snapshot through makes that a single spawn.
+
+    A parameter rather than a module-level cache on purpose: the caller that
+    wants a shared read says so, and nothing else silently starts serving data
+    from some earlier moment.
+    """
+    return _read_sensors_json()
+
+
 def _read_sensors_json() -> dict:
-    out = subprocess.run(
-        ["sensors", "-j"], capture_output=True, text=True, check=True
-    ).stdout
-    return json.loads(out)
+    """Every reading `sensors` can produce, or `{}` if it cannot produce any.
+
+    Failing soft rather than raising, because lm-sensors is genuinely optional
+    here: temperatures are a nice-to-have next to the lighting, and a machine
+    without the package installed is a supported configuration rather than a
+    broken one. Every caller already treats a missing reading as `None`, so an
+    empty dict flows through to "—" in the TUI and `null` in `mimarchy-ctl
+    status --json` with nothing further to do.
+
+    Raising instead is not a theoretical difference. This is read on every TUI
+    repaint and on every poll from the bar widget, so an uncaught
+    FileNotFoundError is a crash loop on exactly the machines least able to
+    diagnose it — and the widget runs inside the user's shell process.
+
+    All three failure modes are real: no `sensors` binary at all
+    (FileNotFoundError), a non-zero exit from a partial or misconfigured
+    lm-sensors setup (CalledProcessError), and output that is not JSON
+    (JSONDecodeError, which subclasses ValueError).
+    """
+    try:
+        out = subprocess.run(
+            ["sensors", "-j"], capture_output=True, text=True, check=True
+        ).stdout
+        return json.loads(out)
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return {}
 
 
-def read_fans() -> list[FanReading]:
+def read_fans(data: dict | None = None) -> list[FanReading]:
     readings = []
-    for chip, entries in _read_sensors_json().items():
+    for chip, entries in (data if data is not None else _read_sensors_json()).items():
         for label, values in entries.items():
             if not isinstance(values, dict):
                 continue
@@ -46,9 +85,9 @@ def read_fans() -> list[FanReading]:
     return readings
 
 
-def read_temps() -> list[TempReading]:
+def read_temps(data: dict | None = None) -> list[TempReading]:
     readings = []
-    for chip, entries in _read_sensors_json().items():
+    for chip, entries in (data if data is not None else _read_sensors_json()).items():
         for label, values in entries.items():
             if not isinstance(values, dict):
                 continue
@@ -58,27 +97,27 @@ def read_temps() -> list[TempReading]:
     return readings
 
 
-def read_cpu_temp() -> float | None:
+def read_cpu_temp(data: dict | None = None) -> float | None:
     """CPU package temperature from k10temp's Tctl.
 
     Deliberately not nct6687's "CPU" reading: that driver reports implausible
     near-zero values on this board (see README), while k10temp reads the CPU's
     own sensor and is trustworthy.
     """
-    for t in read_temps():
+    for t in read_temps(data):
         if t.chip.startswith("k10temp") and t.label == "Tctl":
             return t.celsius
     return None
 
 
-def read_gpu_temp() -> float | None:
+def read_gpu_temp(data: dict | None = None) -> float | None:
     """Discrete GPU edge temperature.
 
     Two amdgpu chips are present (discrete card and the CPU's integrated
     graphics); the discrete one is distinguished by exposing a fan.
     """
-    data = _read_sensors_json()
-    for chip, entries in data.items():
+    readings = data if data is not None else _read_sensors_json()
+    for chip, entries in readings.items():
         if not chip.startswith("amdgpu"):
             continue
         if not any(k.startswith("fan") for k in entries):
@@ -90,13 +129,13 @@ def read_gpu_temp() -> float | None:
     return None
 
 
-def read_cpu_fan_rpm() -> float | None:
+def read_cpu_fan_rpm(data: dict | None = None) -> float | None:
     """The cooler's fan speed, for the panel's RPM readout.
 
     Prefers nct6687's "CPU Fan" over "Pump Fan": on this board the latter
     reports an implausible ~255 while the former tracks the cooler's fans.
     """
-    fans = read_fans()
+    fans = read_fans(data)
     for preferred in ("CPU Fan", "Pump Fan"):
         for f in fans:
             if f.chip.startswith("nct6687") and f.label == preferred and f.rpm > 0:

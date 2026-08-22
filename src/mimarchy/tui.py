@@ -21,8 +21,6 @@ carrying a palette of its own.
 
 from __future__ import annotations
 
-import subprocess
-
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -32,13 +30,10 @@ from textual.widgets import DataTable, Static
 from mimarchy import lightstate
 from mimarchy.config import load_config
 from mimarchy.effects import (COLOUR_EFFECTS, EFFECTS, SPATIAL_EFFECTS,
-                                SPEED_LEVELS)
+                                SPEED_LEVELS, nearest_speed)
 from mimarchy.hwmon import read_cpu_fan_rpm, read_cpu_temp, read_gpu_temp
+from mimarchy.service import DISPLAY_UNIT, set_unit, unit_active
 from mimarchy.theme import palette
-
-#: The telemetry stream. Starting and stopping this unit is what turns the cooler
-#: panel on and off — there is no off command in its protocol.
-DISPLAY_UNIT = "mimarchy-display.service"
 
 PALETTE: list[tuple[str, tuple[int, int, int]]] = [
     ("white", (255, 255, 255)),
@@ -461,25 +456,17 @@ class MimarchyApp(App):
 
     def action_toggle_display(self) -> None:
         self._message = ""
-        action = "stop" if _unit_active(DISPLAY_UNIT) else "start"
-        result = subprocess.run(["systemctl", "--user", action, DISPLAY_UNIT],
-                                capture_output=True, text=True)
-        if result.returncode:
-            self._message = (result.stderr.strip().splitlines() or
-                             [f"could not {action} the display"])[-1]
+        self._message = set_unit(DISPLAY_UNIT, not _unit_active(DISPLAY_UNIT)) or ""
         self.refresh_controls()
 
 
-def _unit_active(unit: str) -> bool:
-    result = subprocess.run(["systemctl", "--user", "is-active", unit],
-                            capture_output=True, text=True)
-    return result.stdout.strip() == "active"
-
-
-def _nearest_speed(speed: float) -> float:
-    """Snap to the ladder. State saved under the old six-stop ladder holds values
-    above the current maximum, and an unsnapped one would light no stop at all."""
-    return min(SPEED_LEVELS, key=lambda s: abs(s - speed))
+#: Aliased rather than imported under their own names so the module-level
+#: symbols the tests patch (`tui._unit_active`) keep working, and so the calls
+#: below read the same as they always did. The implementations live in
+#: `service` and `effects` because `mimarchy-ctl` drives the same units and
+#: walks the same ladder, and two copies would eventually disagree.
+_unit_active = unit_active
+_nearest_speed = nearest_speed
 
 
 def _colour_name(colour) -> str:

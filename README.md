@@ -56,16 +56,38 @@ work without it.
 
 ### Desktop integration
 
-**Omarchy 4.** Two files to merge, both printed by the installer:
+**Omarchy 4.** This repo is also an Omarchy shell plugin, so the tidiest install
+is to let Omarchy do the cloning and then run the installer from where it landed
+— one checkout that `omarchy plugin update` keeps current:
+
+```bash
+omarchy plugin add https://github.com/villenull/mimarchy --enable
+~/.config/omarchy/plugins/io.github.villenull.mimarchy/install.sh
+```
+
+That gives you the bar widget: a bulb icon that dims when the LEDs are frozen,
+and a panel with effect, speed, temperatures, fan RPM, and toggles for the
+cooler display and the CPU/GPU link. Left click opens it, right click toggles
+the display, scroll changes speed. The TUI is one click away and is still the
+place to actually choose effects.
+
+The virtualenv is created in `~/.local/share/mimarchy/` rather than inside the
+checkout, which matters here: `omarchy plugin validate` refuses a symlink
+anywhere in a plugin folder outside `.git`, a virtualenv contains several, and
+`omarchy plugin update` re-validates and rolls back — so a venv in the checkout
+would quietly make the plugin un-updatable.
+
+Two optional extras, both printed by the installer:
 
 | File | Merge into | Gives you |
 |---|---|---|
-| [`omarchy/mimarchy-menu.jsonc`](omarchy/mimarchy-menu.jsonc) | `~/.config/omarchy/extensions/omarchy-menu.jsonc` | a Mimarchy row in the Omarchy menu |
+| [`omarchy/mimarchy-menu.jsonc`](omarchy/mimarchy-menu.jsonc) | `~/.config/omarchy/extensions/omarchy-menu.jsonc` | Mimarchy in the Omarchy menu and its search |
 | [`omarchy/mimarchy.lua`](omarchy/mimarchy.lua) | `~/.config/hypr/hyprland.lua` | the TUI floats instead of tiling |
 
-Omarchy 4 draws bar widgets only from shell plugins, so there is no standalone
-bar icon yet — the menu is the supported way in until the Mimarchy shell plugin
-ships. See [docs/omarchy-4-plan.md](docs/omarchy-4-plan.md).
+The plugin deliberately installs no backend of its own — `omarchy plugin add`
+never runs install hooks or asks for sudo, which is exactly the property that
+makes it safe to run. Until `install.sh` has been run, the widget says so
+instead of drawing an empty panel.
 
 **Omarchy 3.x (legacy).** The Waybar module is kept in
 [`legacy/waybar/`](legacy/waybar/): merge `mimarchy-module.jsonc` and
@@ -95,6 +117,24 @@ ships. See [docs/omarchy-4-plan.md](docs/omarchy-4-plan.md).
 
 There is deliberately no quit key — this is an overlay, closed by closing its
 window the way Omarchy's own floating TUIs are. `Ctrl+C` still works.
+
+## Without the TUI
+
+`mimarchy-ctl` drives the same state from a script, a Hyprland keybinding, or
+the bar widget — which is exactly what the widget does, rather than reaching
+into the state file itself.
+
+```bash
+mimarchy-ctl status            # or --json, which is what the widget reads
+mimarchy-ctl effect rainbow
+mimarchy-ctl speed +           # or -
+mimarchy-ctl display toggle    # on / off / toggle
+mimarchy-ctl link toggle
+```
+
+Writes go through the same atomic write-then-rename the TUI uses, so a bar click
+and a keypress cannot interleave into a half-written file. Nothing here talks to
+hardware; `mimarchy-lightd` still owns that.
 
 ## Notes
 

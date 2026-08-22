@@ -13,8 +13,21 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
-BIN="$REPO/.venv/bin"
 UNITS="$HOME/.config/systemd/user"
+
+# The virtualenv lives outside the checkout, and that is load-bearing rather
+# than tidy-minded. This repo is also an Omarchy shell plugin, so it may *be*
+# `~/.config/omarchy/plugins/io.github.villenull.mimarchy` — and the plugin
+# validator refuses any symlink anywhere inside a plugin folder except under
+# .git. A venv has four of them (`bin/python`, `lib64`, ...; even `--copies`
+# leaves `lib64`), so a venv in the checkout would fail `omarchy plugin
+# validate`, and `omarchy plugin update` re-validates and rolls back — which
+# would quietly make the plugin un-updatable.
+#
+# Keeping it out of the tree also means `omarchy plugin update`'s fast-forward
+# pull never has to reason about it.
+VENV="${MIMARCHY_VENV:-$HOME/.local/share/mimarchy/venv}"
+BIN="$VENV/bin"
 
 say() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 
@@ -41,11 +54,12 @@ fi
 
 say "1/5  Python environment"
 if [[ ! -x "$BIN/python" ]]; then
-  python3 -m venv "$REPO/.venv"
+  mkdir -p "$(dirname "$VENV")"
+  python3 -m venv "$VENV"
 fi
 "$BIN/python" -m pip install --quiet --upgrade pip
 "$BIN/python" -m pip install --quiet -e "$REPO"
-echo "    installed into $REPO/.venv"
+echo "    installed into $VENV"
 
 say "2/5  Narrowing OpenRGB's detector list (before first start)"
 if ! command -v openrgb >/dev/null; then
@@ -80,8 +94,18 @@ echo "    openrgb + mimarchy-light started; mimarchy-display enabled but not sta
 say "4/5  Launcher and desktop integration"
 mkdir -p "$HOME/.local/bin"
 ln -sf "$REPO/bin/omarchy-launch-mimarchy" "$HOME/.local/bin/omarchy-launch-mimarchy"
-ln -sf "$BIN/mimarchy-tui" "$HOME/.local/bin/mimarchy-tui"
+# mimarchy-ctl is not optional here: the bar widget shells out to it by bare
+# name for every poll and every click, so leaving it inside the venv means a
+# widget stuck on "backend not installed" no matter how well the rest installed.
+for entry in mimarchy-tui mimarchy-ctl; do
+  ln -sf "$BIN/$entry" "$HOME/.local/bin/$entry"
+done
 echo "    symlinked into ~/.local/bin"
+
+if ! command -v mimarchy-ctl >/dev/null 2>&1; then
+  echo "    WARNING: ~/.local/bin is not on your PATH — the bar widget will not"
+  echo "             find mimarchy-ctl until it is."
+fi
 case "$OMARCHY" in
   4) echo "    detected Omarchy 4" ;;
   3) echo "    detected Omarchy 3.x" ;;
@@ -102,18 +126,48 @@ cat <<EOF
 EOF
 
 if [[ "$OMARCHY" == 4 ]]; then
+  # This repo is also the shell plugin — manifest.json sits at its root. When it
+  # was cloned by `omarchy plugin add`, it already lives where the shell looks
+  # and there is nothing further to do; otherwise the widget needs adding
+  # separately, which clones a second copy. Both work; saying which one applies
+  # beats printing instructions the user has already followed.
+  if [[ "$REPO" == "$CONFIG_HOME/omarchy/plugins/"* ]]; then
+    cat <<EOF
+
+  b) Bar widget — already installed. This checkout *is* the plugin, so the
+     backend it calls is now in place too. If the icon is not on the bar yet:
+
+       omarchy plugin enable io.github.villenull.mimarchy --section right
+EOF
+  else
+    cat <<EOF
+
+  b) Bar widget — add the plugin to get the icon and panel:
+
+       omarchy plugin add https://github.com/villenull/mimarchy --enable
+
+     That clones a second copy into ~/.config/omarchy/plugins/. To keep one
+     instead, let Omarchy do the cloning and install from where it lands:
+
+       omarchy plugin add https://github.com/villenull/mimarchy --enable
+       ~/.config/omarchy/plugins/io.github.villenull.mimarchy/install.sh
+
+     (Safe either way: the virtualenv goes in ~/.local/share/mimarchy, never
+     inside the plugin folder, which the validator would reject for symlinks.)
+EOF
+  fi
+
   cat <<EOF
 
-  b) Omarchy menu — merge this entry into
+  c) Omarchy menu (optional) — merge this entry into
      ~/.config/omarchy/extensions/omarchy-menu.jsonc:
 
        $REPO/omarchy/mimarchy-menu.jsonc
 
-     Omarchy 4 draws bar widgets only from shell plugins, so there is no
-     standalone bar icon yet — the menu is the supported way in until the
-     Mimarchy shell plugin ships.
+     Worth having even with the widget: it puts Mimarchy in the menu's search,
+     which is how a lot of people open things.
 
-  c) Hyprland — to float the TUI, append this line to ~/.config/hypr/hyprland.lua:
+  d) Hyprland — to float the TUI, append this line to ~/.config/hypr/hyprland.lua:
 
        o.window("org.omarchy.mimarchy-tui", { tag = "+floating-window" })
 
@@ -121,6 +175,7 @@ if [[ "$OMARCHY" == 4 ]]; then
 
      Then reload: \`hyprctl reload\`
 EOF
+  NEXT_STEP=e
 elif [[ "$OMARCHY" == 3 ]]; then
   cat <<EOF
 
@@ -134,18 +189,22 @@ elif [[ "$OMARCHY" == 3 ]]; then
 
        windowrule = tag +floating-window, match:class org.omarchy.mimarchy-tui
 EOF
+  NEXT_STEP=d
 else
   cat <<EOF
 
   b) No Omarchy install detected, so there is nothing to add a launcher to.
      The TUI runs anywhere and falls back to your terminal's own colours.
 EOF
+  NEXT_STEP=c
 fi
 
+# Continues the lettering from wherever the branch above stopped, so the list
+# reads as one sequence instead of repeating or skipping a letter.
 cat <<EOF
 
-  d) Fan RPM readout (optional) needs the out-of-tree nct6687d driver; see the
-     README. Temperatures and lighting work without it.
+  ${NEXT_STEP}) Fan RPM readout (optional) needs the out-of-tree nct6687d driver; see
+     the README. Temperatures and lighting work without it.
 
 Done. Launch with: mimarchy-tui
 EOF

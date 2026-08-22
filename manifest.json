@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.villenull.mimarchy",
+  "name": "Mimarchy",
+  "version": "0.3.0",
+  "author": "Diego Huyke",
+  "license": "MIT",
+  "description": "ARGB lighting for CPU cooler fans and GPU, live sensors, and the cooler's built-in display — as a bar widget, with a TUI behind it.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "quickshell/Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Mimarchy",
+    "description": "Lighting effect and speed, CPU/GPU temperature, fan RPM, and the cooler display — one icon and one panel.",
+    "category": "System",
+    "defaultSection": "right",
+    "allowMultiple": false,
+    "defaults": {
+      "showSensorsInTooltip": true,
+      "pollIntervalSec": 2,
+      "idlePollIntervalSec": 30
+    },
+    "schema": [
+      {
+        "key": "showSensorsInTooltip",
+        "type": "boolean",
+        "label": "Show temperatures in the tooltip",
+        "defaultValue": true,
+        "description": "Off leaves the tooltip to lighting state alone; the panel still shows sensors."
+      },
+      {
+        "key": "pollIntervalSec",
+        "type": "integer",
+        "label": "Sensor refresh while the panel is open (seconds)",
+        "min": 1,
+        "max": 30,
+        "step": 1,
+        "defaultValue": 2
+      },
+      {
+        "key": "idlePollIntervalSec",
+        "type": "integer",
+        "label": "Refresh while the panel is closed (seconds)",
+        "min": 5,
+        "max": 300,
+        "step": 5,
+        "defaultValue": 30,
+        "description": "Only the icon needs this — how quickly it notices the lighting daemon stopping. Effect and speed changes arrive instantly regardless, from the state file."
+      }
+    ]
+  }
+}

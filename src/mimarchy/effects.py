@@ -78,10 +78,21 @@ def _gain_ladder(effect: str | None) -> tuple[float, ...]:
     return tuple(lo * (hi / lo) ** (i / last) for i in range(last + 1))
 
 
+def nearest_speed(speed: float) -> float:
+    """Snap a stored speed onto the ladder.
+
+    State written under the old six-stop ladder holds values above the current
+    maximum, and an unsnapped one lights no stop at all. Public because both the
+    TUI and `mimarchy-ctl` step the ladder and must agree on where a given
+    stored value sits — two different roundings would make the bar and the TUI
+    disagree about the current speed.
+    """
+    return min(SPEED_LEVELS, key=lambda s: abs(s - speed))
+
+
 def _stop_index(speed: float) -> int:
     """Which stop a stored speed sits on. State can hold anything."""
-    nearest = min(SPEED_LEVELS, key=lambda s: abs(s - speed))
-    return SPEED_LEVELS.index(nearest)
+    return SPEED_LEVELS.index(nearest_speed(speed))
 
 
 def speed_gain(speed: float, effect: str | None = None) -> float:

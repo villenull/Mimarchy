@@ -89,6 +89,11 @@ confirmed is runtime behaviour on real hardware — so the checks below still
 want doing on the dev machine after `omarchy-upgrade-to-quattro`, and until
 they are, treat the Lua rule and the menu entry as unexercised in anger:
 
+0. **Load the plugin.** `omarchy plugin validate .`, then
+   `omarchy plugin add`, and watch it actually render: the icon's dim/lit
+   states, the panel's layout at both bar orientations, the wheel and
+   right-click handlers, and the backend-missing message. This is the largest
+   remaining unknown in the whole project — the QML has never been loaded.
 1. `cat ~/.local/state/omarchy/current/theme/colors.toml` — confirm the key
    set across two or three themes (incl. one light theme with `mode`).
 2. Launch `omarchy-launch-mimarchy` — confirm it opens (in Foot), tiles, and
@@ -153,12 +158,63 @@ Shipped, with three findings worth carrying forward:
   (legacy)"; Waybar snippets moved to `legacy/waybar/`; no more Alacritty or
   `bluetui` references, neither of which is a v4 default.
 
-## 5. Phase 2 — the native shell plugin (0.3.0)
+## 5. Phase 2 — the native shell plugin (0.3.0) — **done**
 
-The headline. Mimarchy becomes a proper Omarchy shell plugin: `manifest.json`
-at the repo root, id **`io.github.villenull.mimarchy`** (the marketplace's
-recommended namespace; `omarchy.*` is reserved), kinds **`bar-widget`** +
-**`panel`**.
+The headline. Mimarchy is now an Omarchy shell plugin: `manifest.json` at the
+repo root, id **`io.github.villenull.mimarchy`** (the marketplace's recommended
+namespace; `omarchy.*` is reserved), kind **`bar-widget`**.
+
+Shipped, with these decisions and findings:
+
+- **One `Panel.qml`, not a widget/panel pair.** `panel` as a separate declared
+  kind turned out to be the wrong read of the plugin API: Omarchy's own
+  popup widgets (`omarchy.monitor`, `.audio`, `.network`, `.tailscale`) declare
+  only `bar-widget` and use the `Panel` base type, which already owns the
+  open/close/IPC lifecycle. Declaring `panel` too would have meant a second
+  entry point for a floating window nothing summons independently.
+- **The repo is the plugin.** `manifest.json` sits at the root, so
+  `omarchy plugin add` on this URL clones a working checkout and
+  `omarchy plugin update` fast-forwards it. Running `install.sh` from inside
+  that directory leaves exactly one copy on disk instead of two; `install.sh`
+  detects which case it is in and prints accordingly.
+- **`mimarchy-ctl` came out better than expected.** It was specified as
+  plumbing for the widget, but it is a good command in its own right —
+  `status`, `speed`, `effect`, `display`, `link`, with `--json` for the widget
+  and human output otherwise. It is now documented in the README as a
+  first-class way to use the tool.
+- **Shared code was extracted rather than duplicated.** `service.py` (the two
+  systemd units and the calls that drive them) and `effects.nearest_speed` are
+  now used by both the TUI and the CLI. Two copies of "which stop is this
+  speed on" would have let the bar and the TUI disagree about the current
+  speed, which is the kind of bug nobody reports precisely.
+- **A second pre-existing crash, found by running the thing.**
+  `hwmon._read_sensors_json` used `check=True` with no handler, so *any* machine
+  without `lm_sensors` raised `FileNotFoundError` — on every TUI repaint, and
+  now on every widget poll. Every consumer was already written to expect
+  `None`, so the fix was to fail soft. Caught by running `mimarchy-ctl status`
+  for real; the unit tests all stub the sensors, which is exactly why they
+  missed it. `tests/test_hwmon.py` now exercises the real function.
+- **The venv had to move out of the checkout.** `omarchy-plugin-validate`
+  refuses any symlink under the plugin folder except beneath `.git`, and a
+  virtualenv has four (even `--copies` leaves `lib64`). Since `omarchy plugin
+  update` re-validates and rolls back, a `.venv` in the checkout would have
+  made the plugin silently un-updatable — so `install.sh` now builds it in
+  `~/.local/share/mimarchy/`. The symlink test mirrors the validator exactly,
+  pruning only `.git`, so this cannot be reintroduced without a red test.
+- **`mimarchy-ctl` was never on PATH.** `install.sh` symlinked `mimarchy-tui`
+  and the launcher but not the CLI the widget invokes by bare name — which
+  would have left the panel stuck on "backend not installed" on every stock
+  install, with everything else appearing to work. It is symlinked now, and
+  the installer warns if `~/.local/bin` is not on PATH.
+- **Untested against a running shell.** No Quickshell, and no `qmllint`, exists
+  in the development environment, so the QML is written against the real v4
+  idioms and verified symbol-by-symbol against the shipped source — every
+  component and property used is confirmed exported by `qs.Ui` / `qs.Commons`
+  — but it has never been loaded. Two mistakes were caught this way already
+  (`PanelActionButton` is a 22×22 *icon* button with no `text`, and the panel
+  content needed `Toggle`/`Button` instead), and there may be more that only a
+  running shell will show. `tests/test_manifest.py` stands in for
+  `omarchy plugin validate`, which is the one part that *can* be checked here.
 
 ### Widget behaviour
 

@@ -1,6 +1,10 @@
 [project]
 name = "mimarchy"
-version = "0.1.0"
+# Kept in step with manifest.json's version, and asserted in tests/test_manifest.py.
+# The bar widget shells out to this package's `mimarchy-ctl`, so the two ship as
+# one thing — a plugin newer than the backend it calls is the support case
+# nobody can debug from a screenshot.
+version = "0.3.0"
 description = "Omarchy-native LED control for CPU cooler fans, GPU, and the cooler's display"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -32,6 +36,7 @@ Homepage = "https://github.com/villenull/mimarchy"
 
 [project.scripts]
 mimarchy-tui = "mimarchy.tui:main"
+mimarchy-ctl = "mimarchy.ctl:main"
 mimarchy-displayd = "mimarchy.displayd:main"
 mimarchy-lightd = "mimarchy.lightd:main"
 
