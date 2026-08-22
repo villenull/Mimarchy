@@ -1,0 +1,29 @@
+#!/bin/bash
+
+# Re-point Mimarchy's theme-following LED colours at the theme just selected.
+#
+# Install by copying (or symlinking) into ~/.config/omarchy/hooks/theme-set.d/.
+# `omarchy-theme-set` runs every executable in that directory after it has
+# swapped the active theme, with the theme's name as $1.
+#
+# The name is deliberately unused. `mimarchy-ctl reload-theme` reads the active
+# theme through the same symlink everything else does, so passing the name would
+# add a second source of truth that could disagree with the first — and this hook
+# runs *after* the swap, so the symlink is already correct.
+#
+# Backgrounded and time-limited because this runs inside the theme switch:
+# `omarchy-theme-set` serialises its post-theme commands, so a hook that blocks
+# is a hook that makes every theme change feel slow. Detaching keeps the switch
+# instant, and the LEDs follow a beat later when lightd next polls the state
+# file — which is a frame, at 30fps.
+#
+# Failure is silent on purpose. A theme switch must not report an error because
+# a lighting tool is not installed on this machine any more, or because its
+# config went missing; the desktop's theme still changed, which is what the user
+# asked for.
+
+command -v mimarchy-ctl >/dev/null 2>&1 || exit 0
+
+timeout 5s mimarchy-ctl reload-theme >/dev/null 2>&1 &
+
+exit 0

@@ -106,6 +106,18 @@ if ! command -v mimarchy-ctl >/dev/null 2>&1; then
   echo "    WARNING: ~/.local/bin is not on your PATH — the bar widget will not"
   echo "             find mimarchy-ctl until it is."
 fi
+
+# The theme-set hook is installed rather than printed, unlike the other v4
+# integration steps. Those merge into files the user already owns and edits, so
+# doing it for them risks clobbering their work; this drops one new file into a
+# directory whose entire purpose is third-party hooks, under a name that is ours.
+# Removing it is `rm`, and the hook no-ops when mimarchy-ctl is gone.
+if [[ "$OMARCHY" == 4 ]]; then
+  HOOKS="$CONFIG_HOME/omarchy/hooks/theme-set.d"
+  mkdir -p "$HOOKS"
+  install -m755 "$REPO/omarchy/theme-set.d/mimarchy" "$HOOKS/mimarchy"
+  echo "    theme-set hook installed — LEDs set to a theme colour now follow theme switches"
+fi
 case "$OMARCHY" in
   4) echo "    detected Omarchy 4" ;;
   3) echo "    detected Omarchy 3.x" ;;

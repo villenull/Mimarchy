@@ -21,8 +21,9 @@ install keeps working across the upgrade.
   all rendered in software from one clock so both devices stay in phase.
 - **Linked or independent** — CPU and GPU move together by default; unlink to
   drive them separately.
-- **Theme-driven** — no colour is hardcoded. Switch Omarchy themes and the TUI
-  follows on next open.
+- **Theme-driven, including the LEDs** — no colour is hardcoded. The TUI takes
+  its palette from your Omarchy theme, and the lighting itself can too: pick
+  `theme` as a colour and the strips follow every theme switch, live.
 - **Sensors** — CPU and GPU temperature, fan RPM.
 - **Cooler display** — streams live temperature and fan speed to the panel.
 
@@ -128,6 +129,7 @@ into the state file itself.
 mimarchy-ctl status            # or --json, which is what the widget reads
 mimarchy-ctl effect rainbow
 mimarchy-ctl speed +           # or -
+mimarchy-ctl colour accent     # follow the theme; or green, red, ... or #ff0044
 mimarchy-ctl display toggle    # on / off / toggle
 mimarchy-ctl link toggle
 ```
@@ -135,6 +137,25 @@ mimarchy-ctl link toggle
 Writes go through the same atomic write-then-rename the TUI uses, so a bar click
 and a keypress cannot interleave into a half-written file. Nothing here talks to
 hardware; `mimarchy-lightd` still owns that.
+
+### Lighting that follows your theme
+
+Give a colour a *role* — `accent`, `red`, `orange`, `yellow`, `green`, `cyan`,
+`blue`, `magenta` — instead of a value, and it re-resolves whenever you change
+Omarchy themes. In the TUI, `theme` is the first entry in the colour cycle, so
+pressing an effect's number key twice lands on it. The state file stores the
+role, so it keeps following across reboots.
+
+`install.sh` puts a hook in `~/.config/omarchy/hooks/theme-set.d/` that calls
+`mimarchy-ctl reload-theme` after a theme switch; the daemon picks the new
+colour up on its next frame, so the strips change with the wallpaper rather than
+on the next reboot. Fixed hex colours are never touched by it.
+
+Theme colours are used as authored, with one exception: a colour dimmer than
+55% brightness is lifted to that floor, hue and saturation untouched. Measured
+across the 22 stock themes, that lifts 17 of 173 colours and leaves 156 exactly
+as the theme author set them — a floor rather than a scale, so a deliberately
+muted theme still looks muted on the strip.
 
 ## Notes
 

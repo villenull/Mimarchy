@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -92,26 +93,57 @@ def test_entry_points_are_safe_relative_paths_that_exist(manifest):
         assert (REPO / path).is_file(), f"{key} -> {relative}"
 
 
-def test_no_symlinks_anywhere_in_the_plugin():
-    """The validator rejects symlinks outright, and prunes only `.git`.
+def test_no_tracked_file_is_a_symlink():
+    """What a fresh `omarchy plugin add` clone would contain.
 
-    Mirrors `omarchy-plugin-validate` exactly:
+    `omarchy-plugin-validate` runs, and the shell repeats at load time:
 
         find "$PLUGIN_DIR" -name .git -prune -o -type l -print -quit
 
-    Nothing else is excluded here, deliberately. A virtualenv contains four
-    symlinks (`bin/python`, `lib64`, ...; even `--copies` leaves `lib64`), so a
-    `.venv` inside this checkout would fail the real validator — and because
-    `omarchy plugin update` re-validates and rolls back, it would quietly make
-    the plugin un-updatable for anyone who installed it this way. That is why
-    `install.sh` puts the venv in ~/.local/share/mimarchy instead. Excluding
-    `.venv` here would hide exactly the mistake this test exists to catch.
+    A user's plugin folder is a clone, so its contents are exactly the tracked
+    files — git records a symlink as mode 120000, and that is what would land on
+    their disk and fail validation.
     """
-    for path in REPO.rglob("*"):
-        if ".git" in path.parts:
-            continue
-        assert not path.is_symlink(), (
-            f"{path.relative_to(REPO)} is a symlink; "
+    listing = subprocess.run(["git", "ls-files", "-s"], cwd=REPO,
+                             capture_output=True, text=True, check=True).stdout
+
+    for line in listing.splitlines():
+        mode, _, rest = line.partition(" ")
+        assert mode != "120000", (
+            f"{rest.split(chr(9))[-1]} is a symlink; omarchy plugin validate "
+            "refuses these anywhere but .git"
+        )
+
+
+def test_nothing_untracked_puts_a_symlink_in_the_tree():
+    """Catches a build step that drops a symlink into the plugin folder.
+
+    The case that matters is a virtualenv: it contains four symlinks
+    (`bin/python`, `lib64`, ...; even `--copies` leaves `lib64`), so a `.venv`
+    here would fail the real validator — and since `omarchy plugin update`
+    re-validates and rolls back, it would quietly make the plugin un-updatable
+    for anyone who installed it as one checkout. That is why `install.sh` builds
+    the venv in ~/.local/share/mimarchy instead.
+
+    Ignored paths are skipped, and only those: a gitignored file cannot reach a
+    user's clone, so it cannot reach their plugin folder either. Excluding
+    anything else would hide the mistake this exists to catch.
+    """
+    candidates = [p for p in REPO.rglob("*")
+                  if p.is_symlink() and ".git" not in p.parts]
+    if not candidates:
+        return
+
+    check = subprocess.run(
+        ["git", "check-ignore", "--stdin"], cwd=REPO, input="\n".join(
+            str(p.relative_to(REPO)) for p in candidates),
+        capture_output=True, text=True)
+    ignored = set(check.stdout.split())
+
+    for path in candidates:
+        relative = str(path.relative_to(REPO))
+        assert relative in ignored, (
+            f"{relative} is a symlink and is not gitignored; "
             "omarchy plugin validate refuses these anywhere but .git"
         )
 

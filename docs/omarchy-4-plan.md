@@ -277,7 +277,65 @@ one-line "run install.sh" hint instead of erroring. The marketplace listing
 carries this as its documented install step. `omarchy plugin validate` runs
 in CI so the manifest can't rot.
 
-## 6. Phase 3 — theme-following lighting (0.4.0, differentiation-driven)
+## 6. Phase 3 — theme-following lighting (0.4.0) — **done**
+
+Shipped. What it turned into, and the two judgement calls behind it:
+
+- **`lightd` was not touched at all**, which was the goal. `TargetState` gained
+  a `colour_role`, and the *resolved* RGB keeps being written to `colour`
+  alongside it — so the daemon reads exactly what it always read and the
+  rendering path took on no new failure mode. `mimarchy-ctl reload-theme`
+  re-resolves roles and saves; the daemon's existing mtime poll does the rest.
+  A theme switch reaches the LEDs in a frame, and nothing in the daemon knows
+  a theme exists.
+- **The brightness floor is a floor, not a scale.** Measured over the 8 LED
+  roles across all 22 stock themes (173 defined colours): median HSV value
+  0.70–0.87, with only 17 below 0.55 and 7 below 0.40. Scaling everything to a
+  target brightness would therefore rewrite ~90% of colours to rescue ~10% —
+  and that rewrite is what makes a carefully muted theme come back looking like
+  a toy. Lifting only what falls under the floor leaves 156 of 173 exactly as
+  authored. Hue and saturation are never touched.
+- **A role that resolves to nothing keeps the last colour.** Three stock themes
+  define no `orange`. Reverting to white, or going dark, would both be louder
+  than simply leaving the previous orange in place until a theme with one comes
+  back.
+- **One theme entry in the TUI cycle, not eight.** The cycle is walked by
+  repeated presses of one key, so each entry taxes everyone reaching the ones
+  after it. `accent` is the entry that means "match my desktop"; the other
+  seven roles are reachable from `mimarchy-ctl colour <role>`.
+- **Found while testing: `accent` exists in *both* palette dialects.** v3 had it
+  alongside the ANSI slots, so branching on dialect sent v3 themes to `color4`
+  and silently ignored their real accent. LED roles now try the role's own name
+  first and the ANSI slot only as a fallback, which is both simpler and correct.
+
+### The light-theme colour policy, settled
+
+Carried over from Phase 1, where it was deliberately left open. Resolved in
+favour of **shifting a rejected colour along its own brightness** until it
+clears `MIN_CONTRAST`, holding hue and saturation fixed — the "what a designer
+would do by hand" option — rather than falling back to `accent` or to the plain
+foreground.
+
+The `accent` option was rejected on measurement: it keeps the palette themed
+but makes `frame`, `header` and `accent` the same colour on the themes where it
+fires, so catppuccin-latte still arrived as two distinct colours instead of
+four. Shifting fixes both problems at once. Across all 22 stock themes:
+
+| | before | after |
+|---|---|---|
+| roles collapsed to foreground, light themes | 1.6 of 4 | **0.0** |
+| roles collapsed to foreground, dark themes | 1.0 of 4 | **0.1** |
+| themes showing all four roles distinctly | 21 of 22 (latte showed 2) | **22 of 22** |
+| roles failing the contrast bar | 0 | **0** |
+
+The accessibility guarantee is unchanged — every role still clears the bar, and
+the fallback to the foreground remains for a colour that cannot clear it at any
+brightness (white on white). The shift is a binary search, so it is the
+*smallest* change that works: latte's green moves `#40a02b` → `#3f9e2b`. The
+remaining 0.1 is kanagawa, whose `accent` the theme itself sets equal to its
+foreground — genuinely one colour, not a collapse.
+
+## 6b. Phase 3 as originally specified
 
 Today the *TUI* follows the theme but the *LEDs* show a fixed seven-colour
 palette. v4's hooks make the obvious feature cheap, and the competition

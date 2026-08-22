@@ -132,18 +132,57 @@ class TestV4Dialect:
         assert p.header == "#e0af68"      # yellow
         assert p.accent == "#7aa2f7"      # a real key in v4, not a borrowed slot
 
-    def test_muted_footer_yields_to_the_legibility_guard(self, xdg):
-        """tokyo-night's `muted` is 1.9 against its background, so it loses.
+    def test_an_illegible_role_is_brightened_not_replaced(self, xdg):
+        """tokyo-night's `muted` is 1.9 against its background and must move.
 
-        Asserted as policy rather than as a hex value because `muted` is
-        *designed* to sit low — it clears MIN_CONTRAST on only three of the 22
-        stock themes. The guard firing here is the feature, not a mapping bug.
+        The guard used to substitute the plain foreground here, which is legible
+        but throws the theme's colour away — on the stock themes that fired on
+        one text role per dark theme and 1.6 per light one. Now the colour is
+        shifted along its own brightness until it clears the bar, so the footer
+        is still recognisably the theme's muted blue-grey.
         """
         write_theme(v4_dir(xdg), V4_DARK)
         p = theme.load_palette()
 
         assert theme.contrast("#414868", p.background) < theme.MIN_CONTRAST
-        assert p.footer == p.foreground
+        assert p.footer != p.foreground
+        assert theme.contrast(p.footer, p.background) >= theme.MIN_CONTRAST
+
+    def test_shifting_preserves_hue_and_saturation(self, xdg):
+        """A pale green must become a darker green, never a grey."""
+        import colorsys
+
+        write_theme(v4_dir(xdg), V4_LIGHT)
+        p = theme.load_palette()
+
+        def hsv(hex_colour):
+            return colorsys.rgb_to_hsv(*theme._channels(hex_colour))
+
+        original = hsv("#40a02b")        # latte's green, 2.98 — just under
+        shifted = hsv(p.frame)
+        assert shifted[0] == pytest.approx(original[0], abs=0.02)
+        assert shifted[1] == pytest.approx(original[1], abs=0.05)
+
+    def test_the_shift_is_the_smallest_one_that_works(self, xdg):
+        """Overshooting would darken a colour further than the theme needs."""
+        write_theme(v4_dir(xdg), V4_LIGHT)
+        p = theme.load_palette()
+
+        ratio = theme.contrast(p.frame, p.background)
+        assert ratio >= theme.MIN_CONTRAST
+        assert ratio < theme.MIN_CONTRAST + 0.5
+
+    def test_a_colour_that_cannot_clear_the_bar_falls_back(self, xdg):
+        """White on white has no brightness that works; the fallback still runs."""
+        write_theme(v4_dir(xdg), """\
+background = "#ffffff"
+foreground = "#000000"
+muted = "#fffffe"
+selection = "#eeeeee"
+""")
+        p = theme.load_palette()
+
+        assert theme.contrast(p.footer, p.background) >= theme.MIN_CONTRAST
 
     def test_muted_footer_is_used_when_the_theme_makes_it_readable(self, xdg):
         """Ethereal's muted clears the bar, and then the theme wins."""
@@ -191,9 +230,9 @@ selection = "#ffffff"
 """)
         p = theme.load_palette()
 
-        assert p.select_fg == "#000000"
         ratio = theme.contrast(p.select_fg, p.select_bg)
         assert ratio is not None and ratio >= theme.MIN_CONTRAST
+        assert p.select_fg != p.select_bg
 
     def test_every_role_is_legible_on_every_stock_dialect(self, xdg):
         """No role may come back unreadable against its own background."""
@@ -205,37 +244,23 @@ selection = "#ffffff"
                 ratio = theme.contrast(getattr(p, role), p.background)
                 assert ratio is not None and ratio >= theme.MIN_CONTRAST, role
 
-    def test_dark_theme_keeps_its_roles_distinct(self, xdg):
-        """Legible is not enough — the roles must still be *different colours*.
+    @pytest.mark.parametrize("body,mode", [(V4_DARK, "dark"), (V4_LIGHT, "light")])
+    def test_all_four_text_roles_stay_distinct(self, xdg, body, mode):
+        """Legible is not enough — the roles must be *different colours*.
 
         Asserting only contrast cannot catch a mapping that has quietly
-        collapsed every role onto the foreground, because the foreground passes
-        the contrast check by construction. tokyo-night should lose exactly one
-        role (the footer, whose `muted` is deliberately dim).
+        collapsed every role onto the foreground, because the foreground clears
+        the contrast check by construction. That is what used to happen:
+        catppuccin-latte arrived as two colours instead of four. Both modes are
+        checked because the light one is where it went wrong.
         """
-        write_theme(v4_dir(xdg), V4_DARK)
+        write_theme(v4_dir(xdg), body)
         p = theme.load_palette()
 
-        assert p.footer == p.foreground
-        assert len({p.frame, p.header, p.accent}) == 3
-        for role in ("frame", "header", "accent"):
-            assert getattr(p, role) != p.foreground, role
-
-    def test_light_theme_collapse_is_known_and_bounded(self, xdg):
-        """catppuccin-latte is the worst case: its bright hues miss the bar.
-
-        Pinned rather than fixed. The guard is doing what it is meant to, and
-        preferring a themed-but-dim colour instead is a colour-policy decision
-        that belongs with the theme-following work. This test is here so that
-        change shows up as a deliberate edit rather than a silent drift.
-        """
-        write_theme(v4_dir(xdg), V4_LIGHT)
-        p = theme.load_palette()
-
-        collapsed = [r for r in ("frame", "header", "accent", "footer")
-                     if getattr(p, r) == p.foreground]
-        assert collapsed == ["frame", "header", "footer"]
-        assert p.accent == "#1e66f5"      # the accent still survives
+        roles = {p.frame, p.header, p.accent, p.footer}
+        assert len(roles) == 4, mode
+        for role in ("frame", "header", "accent", "footer"):
+            assert getattr(p, role) != p.foreground, (mode, role)
 
 
 class TestV3Dialect:
@@ -247,19 +272,28 @@ class TestV3Dialect:
         assert p.header == "#e0af68"      # color3
         assert p.accent == "#a9b1d6"      # color7
         assert p.select_bg == "#7da6ff"   # color12
-        # color8 is "bright black" and fails the guard here, exactly as it did
-        # before the v4 work — the dim-footer behaviour is unchanged by it.
-        assert p.footer == p.foreground
+        # color8 is "bright black" and misses the bar, so it is brightened
+        # rather than used as-is — but it stays the theme's colour.
+        assert p.footer != p.foreground
+        assert theme.contrast(p.footer, p.background) >= theme.MIN_CONTRAST
 
-    def test_illegible_slot_falls_back_to_foreground(self, xdg):
-        """Gruvbox's color8 against its background is a 1.3 ratio footer."""
+    def test_illegible_slot_is_brightened(self, xdg):
+        """Gruvbox's color8 against its background is a 1.3 ratio footer.
+
+        The original motivating case for the guard, and the one the docstring
+        cites. It is still caught — it just keeps its warm grey now instead of
+        becoming the plain foreground.
+        """
         write_theme(v3_dir(xdg), """\
 background = "#282828"
 foreground = "#ebdbb2"
 color8 = "#3c3836"
 """)
         p = theme.load_palette()
-        assert p.footer == "#ebdbb2"
+
+        assert theme.contrast("#3c3836", "#282828") < theme.MIN_CONTRAST
+        assert theme.contrast(p.footer, p.background) >= theme.MIN_CONTRAST
+        assert p.footer != p.foreground
 
 
 class TestSearchOrder:

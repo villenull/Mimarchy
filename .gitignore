@@ -1,4 +1,14 @@
+# Agent tooling scratch — git worktrees are created under here, so it is a whole
+# second checkout rather than anything belonging in the tree.
+.claude/
+
 # Python
+#
+# Note: install.sh builds its virtualenv in ~/.local/share/mimarchy, not here.
+# This repo doubles as an Omarchy shell plugin, and `omarchy plugin validate`
+# refuses a symlink anywhere inside a plugin folder except under .git — a venv
+# has several. These entries cover a hand-made one during development; keeping
+# it out of the tree entirely is what tests/test_manifest.py enforces.
 .venv/
 venv/
 __pycache__/

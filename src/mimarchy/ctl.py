@@ -35,6 +35,7 @@ from mimarchy.effects import COLOUR_EFFECTS, EFFECTS, SPEED_LEVELS, nearest_spee
 from mimarchy.hwmon import (read_cpu_fan_rpm, read_cpu_temp, read_gpu_temp,
                             snapshot)
 from mimarchy.service import DISPLAY_UNIT, LIGHT_UNIT, set_unit, unit_active
+from mimarchy.theme import LED_ROLES, led_colour
 
 #: Effects that ignore the speed ladder entirely. Asking for a speed change on
 #: one of these is not an error — it is a no-op with an explanation, because the
@@ -84,6 +85,8 @@ def cmd_status(args: argparse.Namespace) -> int:
             "colour": list(target.colour),
             "speed": target.speed,
             "speed_stop": _speed_label(target.speed),
+            "colour_role": target.colour_role,
+            "follows_theme": bool(target.colour_role),
             "takes_colour": target.effect in COLOUR_EFFECTS,
             "takes_speed": target.effect not in STATIC_EFFECTS,
         }
@@ -189,6 +192,78 @@ def cmd_display(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_colour(args: argparse.Namespace) -> int:
+    """Set a fixed colour, or hand a target's colour over to the theme."""
+    role: str | None = None
+    rgb: tuple[int, int, int] | None = None
+
+    if args.value in LED_ROLES:
+        role = args.value
+        rgb = led_colour(role)
+        if rgb is None:
+            # Every theme defines `accent` and the six ANSI-backed hues; only
+            # `orange` is genuinely absent from some (three of the stock v4
+            # themes). Saying which is missing beats a generic failure.
+            print(f"the active theme does not define '{role}'", file=sys.stderr)
+            return 1
+    else:
+        rgb = _parse_hex(args.value)
+        if rgb is None:
+            print(f"not a colour: {args.value}", file=sys.stderr)
+            print(f"give a hex value like '#ff0044', or one of: "
+                  f"{', '.join(LED_ROLES)}", file=sys.stderr)
+            return 2
+
+    state = lightstate.load()
+    for key in _targets(state):
+        target = state.for_target(key)
+        target.colour = rgb
+        target.colour_role = role
+    lightstate.save(state)
+    return 0
+
+
+def cmd_reload_theme(args: argparse.Namespace) -> int:
+    """Re-resolve every theme-following colour against the current theme.
+
+    This is what `~/.config/omarchy/hooks/theme-set.d/` calls, and it is the
+    whole of the live re-theme: the resolved colours are written back into the
+    state file, and `mimarchy-lightd` picks them up on its next frame through
+    the same mtime poll it already uses for a keypress. Nothing in the daemon
+    knows a theme switch happened, which is precisely why this could not break
+    the rendering path.
+    """
+    state = lightstate.load()
+
+    changed = False
+    for key in _targets(state):
+        target = state.for_target(key)
+        if not target.colour_role:
+            continue
+        rgb = led_colour(target.colour_role)
+        # A role the new theme does not define keeps its previous colour rather
+        # than going dark or reverting to white: the user asked for "the theme's
+        # orange", and the honest answer on a theme without one is to leave the
+        # last orange in place until a theme with one comes back.
+        if rgb is not None and rgb != tuple(target.colour):
+            target.colour = rgb
+            changed = True
+
+    if changed:
+        lightstate.save(state)
+    return 0
+
+
+def _parse_hex(value: str) -> tuple[int, int, int] | None:
+    text = value.strip().lstrip("#")
+    if len(text) != 6:
+        return None
+    try:
+        return tuple(int(text[i:i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
+    except ValueError:
+        return None
+
+
 def cmd_link(args: argparse.Namespace) -> int:
     state = lightstate.load()
     state.linked = {"on": True, "off": False, "toggle": not state.linked}[args.action]
@@ -234,6 +309,18 @@ def build_parser() -> argparse.ArgumentParser:
     link = sub.add_parser("link", help="link or unlink CPU and GPU")
     link.add_argument("action", choices=["on", "off", "toggle"])
     link.set_defaults(func=cmd_link)
+
+    colour = sub.add_parser("colour", aliases=["color"],
+                            help="set a fixed colour, or follow the theme")
+    colour.add_argument("value", metavar="COLOUR",
+                        help=f"a hex value like '#ff0044', or one of: "
+                             f"{', '.join(LED_ROLES)}")
+    colour.set_defaults(func=cmd_colour)
+
+    reload_theme = sub.add_parser(
+        "reload-theme",
+        help="re-resolve theme-following colours (called by the theme-set hook)")
+    reload_theme.set_defaults(func=cmd_reload_theme)
 
     return parser
 

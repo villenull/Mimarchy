@@ -35,6 +35,17 @@ class TargetState:
     colour: tuple[int, int, int] = (255, 255, 255)
     speed: float = 1.0
 
+    #: A theme palette role (`accent`, `green`, ...) when the colour is meant to
+    #: follow the desktop, or None when the user picked a fixed colour.
+    #:
+    #: The resolved RGB is still written to `colour` alongside it, and that
+    #: redundancy is deliberate. It keeps `lightd` unchanged — it reads `colour`
+    #: and knows nothing about themes, so the rendering path takes no new failure
+    #: mode — and it means a theme that has gone missing shows the last colour
+    #: that worked rather than going dark. `colour_role` is the record of *why*
+    #: that value is what it is, which is what lets a theme switch re-resolve it.
+    colour_role: str | None = None
+
 
 @dataclass
 class LightingState:
@@ -61,6 +72,9 @@ class LightingState:
                     effect=v.get("effect", "static"),
                     colour=tuple(v.get("colour", (255, 255, 255))),  # type: ignore[arg-type]
                     speed=float(v.get("speed", 1.0)),
+                    # Absent in every file written before theme-following
+                    # existed, which reads correctly as "this is a fixed colour".
+                    colour_role=v.get("colour_role") or None,
                 )
                 for k, v in raw.get("targets", {}).items()
             },

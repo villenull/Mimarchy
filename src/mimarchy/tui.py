@@ -33,7 +33,7 @@ from mimarchy.effects import (COLOUR_EFFECTS, EFFECTS, SPATIAL_EFFECTS,
                                 SPEED_LEVELS, nearest_speed)
 from mimarchy.hwmon import read_cpu_fan_rpm, read_cpu_temp, read_gpu_temp
 from mimarchy.service import DISPLAY_UNIT, set_unit, unit_active
-from mimarchy.theme import palette
+from mimarchy.theme import led_colour, palette
 
 PALETTE: list[tuple[str, tuple[int, int, int]]] = [
     ("white", (255, 255, 255)),
@@ -44,6 +44,25 @@ PALETTE: list[tuple[str, tuple[int, int, int]]] = [
     ("blue", (30, 100, 255)),
     ("magenta", (255, 0, 160)),
 ]
+
+#: Fixed swatches by name, for the cycle below.
+PALETTE_BY_NAME: dict[str, tuple[int, int, int]] = dict(PALETTE)
+
+#: The colour cycle a repeat effect-key press walks. Entries carrying a role
+#: resolve from the active Omarchy theme each time they are selected; entries
+#: with `None` are the fixed swatches above.
+#:
+#: One theme entry rather than all eight LED roles: the cycle is walked by
+#: repeated presses of a single key, so every entry added is a keypress taxed on
+#: everyone reaching the ones after it. `accent` is the one that means "match my
+#: desktop", which is the whole request. The remaining roles are reachable from
+#: `mimarchy-ctl colour <role>` for anyone who wants a specific hue.
+#:
+#: Theme first, so the very first press of a repeat lands on the theme colour —
+#: the behaviour worth discovering by accident.
+COLOUR_CYCLE: list[tuple[str, str | None]] = (
+    [("theme", "accent")] + [(name, None) for name, _ in PALETTE]
+)
 
 #: Row labels. Linked collapses to one row naming both devices; unlinked names
 #: them individually, so the split is legible at a glance rather than inferred
@@ -273,7 +292,8 @@ class MimarchyApp(App):
             st = self.state.for_target(self._state_key(target))
             label = (LINKED_LABEL if len(self._members(target)) > 1
                      else LABELS.get(target, target))
-            colour = _colour_name(st.colour) if st.effect in COLOUR_EFFECTS else "—"
+            colour = (_colour_name(st.colour, st.colour_role)
+                      if st.effect in COLOUR_EFFECTS else "—")
             speed = "—" if st.effect in ("static", "off") else f"{st.speed:.1f}"
             notes = []
             if len(self._members(target)) > 1:
@@ -322,8 +342,14 @@ class MimarchyApp(App):
         # firmware is animating — its modes all report `color_mode=0` and reject a
         # colour outright. Saying so beats letting the key quietly do nothing.
         colour_live = st.effect in COLOUR_EFFECTS and not firmware
-        swatch = "  ".join(lit(n, colour_live and c == tuple(st.colour))
-                           for n, c in PALETTE)
+        # Marked by role where there is one, so the theme entry lights up even
+        # when its resolved accent happens to equal one of the fixed swatches.
+        swatch = "  ".join(
+            lit(name, colour_live and (
+                st.colour_role == role if role is not None
+                else st.colour_role is None
+                and PALETTE_BY_NAME[name] == tuple(st.colour)))
+            for name, role in COLOUR_CYCLE)
         if not colour_live:
             # "the card picks its own" is only true where the effect *has* a
             # colour that the firmware then ignores — chase. For rainbow the
@@ -334,7 +360,7 @@ class MimarchyApp(App):
                    if firmware and st.effect in COLOUR_EFFECTS
                    else f"{st.effect} has no color")
             swatch = (f"[{pal.footer}]"
-                      + "  ".join(n for n, _ in PALETTE)
+                      + "  ".join(name for name, _ in COLOUR_CYCLE)
                       + f"    ({why})[/]")
         lines.append(label("color") + swatch)
 
@@ -433,12 +459,7 @@ class MimarchyApp(App):
         if st.effect != effect:
             st.effect = effect
         elif effect in COLOUR_EFFECTS and not self._on_firmware(self.selected):
-            colours = [c for _, c in PALETTE]
-            try:
-                st.colour = colours[(colours.index(tuple(st.colour)) + 1)
-                                    % len(colours)]
-            except ValueError:
-                st.colour = colours[0]
+            _advance_colour(st)
         else:
             return
         self._after_change()
@@ -469,7 +490,42 @@ _unit_active = unit_active
 _nearest_speed = nearest_speed
 
 
-def _colour_name(colour) -> str:
+def _advance_colour(st) -> None:
+    """Step to the next entry in the colour cycle.
+
+    Located by *role* first and by RGB only as a fallback, because the theme
+    entry has no fixed value to match on — its resolved colour is whatever the
+    current theme's accent happens to be, and on some themes that will coincide
+    with one of the fixed swatches. Matching on role keeps "which entry is
+    selected" a question about intent rather than about the current hue.
+    """
+    index = 0
+    if st.colour_role:
+        index = next((i for i, (_, role) in enumerate(COLOUR_CYCLE)
+                      if role == st.colour_role), 0)
+    else:
+        index = next((i for i, (_, role) in enumerate(COLOUR_CYCLE)
+                      if role is None and PALETTE_BY_NAME.get(COLOUR_CYCLE[i][0])
+                      == tuple(st.colour)), -1)
+
+    for step in range(1, len(COLOUR_CYCLE) + 1):
+        name, role = COLOUR_CYCLE[(index + step) % len(COLOUR_CYCLE)]
+        if role is None:
+            st.colour, st.colour_role = PALETTE_BY_NAME[name], None
+            return
+        rgb = led_colour(role)
+        # A theme that does not define the role, or no theme at all, means the
+        # entry simply is not available right now — so it is stepped over rather
+        # than selected into a colour that would not change. Skipping keeps the
+        # key responsive on a machine with no Omarchy instead of appearing dead.
+        if rgb is not None:
+            st.colour, st.colour_role = rgb, role
+            return
+
+
+def _colour_name(colour, role: str | None = None) -> str:
+    if role:
+        return f"theme {role}"
     for name, rgb in PALETTE:
         if tuple(colour) == rgb:
             return name
