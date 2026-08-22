@@ -142,6 +142,30 @@ manifest declares kind `bar` — a whole-bar replacement. A `bar-widget` is neve
 a bar option, so `active` is false for every one of them, first-party included.
 The field to read is `enabled`, which for a widget is `inBar(id)`.
 
+### The panel is keyboard-drivable, confirmed by hand
+
+Pressed at the keyboard with the panel open, no mouse involved after the icon
+click: `u` flipped the link (`linked` went to `false` in the state file), `-`
+stepped every zone from `speed 5/5` to `4/5`, and `Escape` closed the panel.
+
+Worth recording *how* this was established, because the obvious method does not
+work. `wtype` can inject the keys, but it delivers them to whatever surface has
+focus — during one attempt they landed in an unrelated window and were typed
+into someone's chat. Injection also produced a misleading partial result:
+`Escape` appeared to work while `u` and `d` appeared not to, which looks exactly
+like "keys arrive but `textKey` is broken" and is not what is happening. The
+three-key sequence above, pressed by a person, is the test; the discriminator is
+that `Escape` is handled inside `PanelKeyCatcher` while letters travel through
+`textKey`, so comparing them says which half failed rather than only that
+something did.
+
+The wiring itself is the same as every first-party panel: `KeyboardPanel` with
+`focusTarget: keyCatcher`. `KeyboardPanel` exists specifically so a panel can be
+summoned by key at all — an xdg-popup only receives keys after a click routes
+focus through its parent surface, so it primes `WlrKeyboardFocus.Exclusive`
+briefly on map. And the stock summon idiom works for a third-party id, checked
+with `omarchy-shell shell toggle io.github.villenull.mimarchy`.
+
 ### What the live run confirmed
 
 - **Both icon states.** Dimmed with `mimarchy-light.service` stopped, full
@@ -194,7 +218,9 @@ the interesting branch was taken.
 2. **A vertical bar.** `vertical` changes `BarIconButton`'s sizing (`fixedWidth`
    vs `fixedHeight`) and the panel's anchoring, and the sizing bug above is a
    reminder that this is the kind of thing only a running bar answers.
-3. **Wheel and right-click**, and the backend-missing message.
+3. **Wheel and right-click on the bar icon.** The keyboard path is now
+   confirmed, but no pointer-injection tool is installed and `wtype` is
+   keyboard-only, so the scroll and right-click handlers remain unexercised.
 4. **The theme hook end to end** — switch themes and watch the LEDs follow.
    Needs the LEDs.
 5. **A user-installed theme's `colors.toml`.** The machine has only the 22 stock

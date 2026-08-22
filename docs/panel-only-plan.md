@@ -174,12 +174,12 @@ The parts worth specifying now:
   written for.
 - **Sensors come out**, including the temperature half of the tooltip.
 - **The panel has to be keyboard-drivable**, because retiring the TUI is
-  otherwise where keyboard operation goes. Omarchy 4 supports this properly and
-  the widget already sits on the right primitives — `KeyboardPanel` with
-  `focusTarget: keyCatcher`, which is what every first-party panel does, and
-  `KeyboardPanel` exists specifically so a panel can be summoned by key at all
-  (an xdg-popup only gets keys after a click routes focus to it). What is
-  missing is a cursor: today the panel has nothing to select, so it only uses
+  otherwise where keyboard operation goes. This is not a risk: it was confirmed
+  by hand on 2026-08-22 — `u` toggled the link, `-` stepped every zone's speed,
+  `Escape` closed the panel, no mouse after the icon click. The widget already
+  sits on the right primitives (`KeyboardPanel` with `focusTarget: keyCatcher`,
+  as every first-party panel does), so the keyboard story survives the TUI
+  rather than dying with it. What is missing is a cursor: today the panel has nothing to select, so it only uses
   `PanelKeyCatcher`'s `textKey`. Always-open turns it into a 2D field — N zones
   by seven effects, eight swatches and five stops — which needs
   `moveRequested`/`activateRequested` wired the way `bluetooth/Panel.qml` drives
