@@ -83,8 +83,11 @@ working exactly as before.)
 
 ## 3. Phase 0 — verify on a live Omarchy 4 machine
 
-The research above is from source; spend an hour confirming behaviour on the
-actual dev machine after `omarchy-upgrade-to-quattro`:
+Everything above was verified against the Omarchy source at v4.0.0+ and the
+22 stock themes, which was enough to build Phase 1 against. What is *not* yet
+confirmed is runtime behaviour on real hardware — so the checks below still
+want doing on the dev machine after `omarchy-upgrade-to-quattro`, and until
+they are, treat the Lua rule and the menu entry as unexercised in anger:
 
 1. `cat ~/.local/state/omarchy/current/theme/colors.toml` — confirm the key
    set across two or three themes (incl. one light theme with `mode`).
@@ -96,31 +99,59 @@ actual dev machine after `omarchy-upgrade-to-quattro`:
 4. Confirm the `theme-set` hook fires with the theme name in `$1`.
 5. Record findings in `docs/omarchy-4-notes.md`.
 
-## 4. Phase 1 — parity on v4 (ships first, as 0.2.0)
+## 4. Phase 1 — parity on v4 (ships first, as 0.2.0) — **done**
 
 Goal: a v4 user is no worse off than a v3 user is today, before any widget
 work. Small, and it unblocks everything else.
 
-- **`theme.py`**: support both palette dialects and both paths. Try
-  `$XDG_STATE_HOME/omarchy/current/theme` first, then the old config path
-  for 3.x. Detect dialect by key presence; map roles onto the new semantic
-  keys directly — `frame`→`green`, `header`→`yellow`, `accent`→`accent` (a
-  real key at last), `footer`→`muted`, selection pair from `selection` — and
-  keep the slot mapping for v3 files. The legibility (`_legible`) and
-  fail-soft logic is dialect-independent and stays. This module is where the
-  v4 work has tests: fixture `colors.toml` files in both dialects.
-- **Float again**: keep the `org.omarchy.mimarchy-tui` app-id (it still gets
-  v4's `terminal` tag for opacity/theming), and have `install.sh` print the
-  v4 Lua rule for `~/.config/hypr/hyprland.lua`
-  (`o.window({ tag = "+floating-window", match = { class = "org.omarchy.mimarchy-tui" } })`
-  — exact form confirmed in Phase 0) alongside the old `.conf` line for 3.x.
-- **`install.sh` v3/v4 detection**: `~/.local/state/omarchy/current/theme`
-  present → v4 instructions; `~/.config/waybar/` present → legacy
-  instructions. Move `waybar/` to `legacy/waybar/` with a note.
-- **Terminal-agnostic docs**: stop saying Alacritty anywhere; the launcher
-  already inherits whatever `xdg-terminal-exec` resolves.
-- **README**: install section split into "Omarchy 4" and "Omarchy 3.x
-  (legacy)".
+Shipped, with three findings worth carrying forward:
+
+- **A bar icon is plugin-only.** Omarchy 4 draws bar widgets exclusively from
+  shell plugins — there is no `shell.json` entry or drop-in that adds a
+  standalone item. The Phase 1 stopgap is therefore a *menu* entry
+  (`omarchy/mimarchy-menu.jsonc`), not an icon; the icon genuinely arrives
+  with Phase 2 and cannot be pulled forward.
+- **`muted` loses the legibility guard on 19 of 22 stock themes.** Measured
+  across every shipped v4 theme, the `muted` key clears `MIN_CONTRAST` on
+  only three (median ratio 2.25) — it is designed to sit low. The footer role
+  therefore resolves to the plain foreground on most themes, exactly as v3's
+  `color8` did. That is the guard working, not the mapping failing, and it is
+  recorded in `theme.py` so it is not "fixed" later by mistake. Whether a hint
+  bar deserves a lower bar than WCAG large-text is a real question, but it is
+  a policy change and did not belong in a compatibility phase.
+- **The fallback palette never worked.** `Palette.fallback()` used
+  `bright_black` for the footer: valid in Rich, rejected by Textual (which
+  wants `ansi_bright_black`, which Rich then rejects — as do `grey`, `grey50`,
+  `dim`, `silver`). Any machine without an Omarchy theme hit a stylesheet
+  error on startup, so the documented fail-soft path was itself a crash. It
+  went unnoticed because a developer machine always has a theme to read. Fixed
+  to a hex grey — the only vocabulary both engines share — with a test that
+  parses every fallback value through both. This also un-broke 22 pre-existing
+  test failures.
+
+- **`theme.py`** — both palette dialects and both paths. `theme_dirs()` tries
+  `$XDG_STATE_HOME/omarchy/current/theme` then the 3.x config path, reading
+  the environment per call so it is testable. Dialect is detected from key
+  presence (`muted`/`selection`/`bright_foreground` mark v4), canonical
+  before numbered so a theme carrying both is read the way Omarchy reads it.
+  Roles map onto `green`, `yellow`, `accent`, `muted`, and the documented
+  `selection` / `bright_foreground` pairing; the v3 slot mapping is untouched.
+  Verified against all 22 stock v4 themes: every role legible in every one,
+  light and dark.
+- **Float again** — `omarchy/mimarchy.lua` carries
+  `o.window("org.omarchy.mimarchy-tui", { tag = "+floating-window" })`.
+  Tagging rather than `float = true` keeps the standard centring and 875x600.
+  The app-id is unchanged and still picks up v4's `terminal` tag for free
+  (Omarchy matches `org\.omarchy\..*` for that one).
+- **`install.sh` v3/v4 detection** — branches on which theme path exists,
+  since 4.0 moved it and left no symlink, so the path *is* the version test.
+  Prints matching instructions for v4, 3.x, or neither.
+- **Launcher** — `bin/omarchy-launch-mimarchy` (moved out of `waybar/`) still
+  prefers `omarchy-launch-or-focus-tui`, and now falls back to
+  `xdg-terminal-exec` and then `$TERMINAL`, so it works off Omarchy too.
+- **README** — install section split into "Omarchy 4" and "Omarchy 3.x
+  (legacy)"; Waybar snippets moved to `legacy/waybar/`; no more Alacritty or
+  `bluetui` references, neither of which is a v4 default.
 
 ## 5. Phase 2 — the native shell plugin (0.3.0)
 
@@ -207,6 +238,20 @@ palette. v4's hooks make the obvious feature cheap, and the competition
   reopen. (The TUI keeps its read-at-startup behaviour; it's an overlay.)
 - The persisted state stores the *role* ("theme accent"), not the resolved
   hex, so it keeps following across reboots and theme changes.
+- **Settle the light-theme colour policy** — carried over from Phase 1, which
+  deliberately did not decide it. The legibility guard is tuned for a dark
+  background, and light themes pay for it: measured across the stock themes,
+  a dark theme loses 1.0 of 4 roles to the plain foreground, a light theme
+  1.6, and catppuccin-latte comes back in two colours instead of four because
+  its `green` (2.98) and `yellow` (2.2) both just miss the 3.0 bar. The TUI
+  stays readable, but it stops looking themed — on the one desktop whose
+  selling point is that everything matches. Options, in preference order:
+  fall back to `accent` (passes on 22 of 22, median 6.13) before the
+  foreground, so a rejected role stays a theme colour; or darken the named
+  colour toward `dark_foreground` until it clears the bar, which keeps the
+  hue and is what a designer would do by hand. Either is a visible change to
+  every light theme, which is why it wants deciding here rather than being
+  slipped into a compatibility pass.
 
 ## 7. Phase 4 — generalize the lighting path
 

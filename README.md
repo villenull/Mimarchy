@@ -5,10 +5,13 @@
 A single-screen TUI for the ARGB lighting on a CPU cooler's fans and a graphics
 card, plus the cooler's built-in temperature display. It is built for
 [Omarchy](https://omarchy.org/) specifically: it takes every colour from your
-active Omarchy theme at startup, and it launches from a Waybar icon into a
-floating window in the same style as `bluetui` and `nmtui`. Lighting reaches the
-motherboard headers and the card over the OpenRGB SDK; the cooler's display is
-driven directly over HID with a protocol reverse-engineered for it.
+active Omarchy theme at startup, and it opens as a floating terminal window in
+the style Omarchy uses for its own TUIs. Lighting reaches the motherboard
+headers and the card over the OpenRGB SDK; the cooler's display is driven
+directly over HID with a protocol reverse-engineered for it.
+
+Runs on **Omarchy 4** and on Omarchy 3.x. Both theme formats are read, so an
+install keeps working across the upgrade.
 
 ![Mimarchy demo](docs/demo.gif)
 
@@ -40,7 +43,8 @@ cd mimarchy
 
 That creates a virtualenv, narrows OpenRGB's detector list, installs and starts
 the user services, and prints the two or three steps that need root or a config
-merge. Then:
+merge. It detects which Omarchy you are on and prints the matching desktop
+integration. Then:
 
 ```bash
 mimarchy-tui
@@ -49,6 +53,25 @@ mimarchy-tui
 Requires Python 3.11+, `openrgb`, and a running Wayland session. Fan RPM
 additionally needs the out-of-tree `nct6687d` driver — temperatures and lighting
 work without it.
+
+### Desktop integration
+
+**Omarchy 4.** Two files to merge, both printed by the installer:
+
+| File | Merge into | Gives you |
+|---|---|---|
+| [`omarchy/mimarchy-menu.jsonc`](omarchy/mimarchy-menu.jsonc) | `~/.config/omarchy/extensions/omarchy-menu.jsonc` | a Mimarchy row in the Omarchy menu |
+| [`omarchy/mimarchy.lua`](omarchy/mimarchy.lua) | `~/.config/hypr/hyprland.lua` | the TUI floats instead of tiling |
+
+Omarchy 4 draws bar widgets only from shell plugins, so there is no standalone
+bar icon yet — the menu is the supported way in until the Mimarchy shell plugin
+ships. See [docs/omarchy-4-plan.md](docs/omarchy-4-plan.md).
+
+**Omarchy 3.x (legacy).** The Waybar module is kept in
+[`legacy/waybar/`](legacy/waybar/): merge `mimarchy-module.jsonc` and
+`mimarchy-style.css` into `~/.config/waybar/`, add `"custom/mimarchy"` to
+`modules-right`, and add the `windowrule` line the installer prints to
+`~/.config/hypr/hyprland.conf`.
 
 > **One ordering constraint the script handles for you:** OpenRGB's broad
 > GPU/I2C detection is a documented total-system freeze on some cards
@@ -71,7 +94,7 @@ work without it.
 | `d` | cooler display on / off |
 
 There is deliberately no quit key — this is an overlay, closed by closing its
-window, like `bluetui`. `Ctrl+C` still works.
+window the way Omarchy's own floating TUIs are. `Ctrl+C` still works.
 
 ## Notes
 

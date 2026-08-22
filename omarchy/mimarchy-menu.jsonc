@@ -1,0 +1,32 @@
+// Add Mimarchy to the Omarchy menu, for Omarchy 4.
+//
+// Merge this entry into ~/.config/omarchy/extensions/omarchy-menu.jsonc — that
+// file overlays the shipped menu, so nothing here is lost on an Omarchy update.
+//
+// This is Phase 1's answer to "reachable from the bar". Omarchy 4 draws bar
+// widgets only from shell plugins, so there is no supported way to drop a
+// standalone icon next to the tray the way the Waybar module did; the menu is
+// the closest thing that does not require the plugin, and it is on the bar.
+// The real bar widget lands with the shell plugin.
+//
+// The id has no dot, so the row sits on the root menu. `system` was the obvious
+// -looking parent and is the wrong one: it holds lock/logout/reboot/suspend,
+// not hardware tools.
+//
+// The glyph is U+F0335 (nf-md-lightbulb), the same one the Waybar module used —
+// a solid bulb that matches the weight of the icons beside it. An editor may
+// write it back as the surrogate escape "󰌵"; that is the same
+// character, not a different one. Confirm any replacement by rendering it: this
+// glyph has twice shipped as a codepoint that existed in the font but was not
+// the one anyone expected.
+{
+  "mimarchy": {
+    "icon": "󰌵",
+    "label": "Mimarchy",
+    "description": "LEDs, sensors, cooler display",
+    "action": "omarchy-launch-mimarchy",
+    // Hide the row on a machine where the install has been removed, rather
+    // than leaving a menu entry that opens nothing.
+    "when": "command -v omarchy-launch-mimarchy >/dev/null"
+  }
+}
