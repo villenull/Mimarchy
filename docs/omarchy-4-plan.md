@@ -367,7 +367,52 @@ palette. v4's hooks make the obvious feature cheap, and the competition
   every light theme, which is why it wants deciding here rather than being
   slipped into a compatibility pass.
 
-## 7. Phase 4 — generalize the lighting path
+## 7. Phase 4 — generalize the lighting path — **done**
+
+Shipped, developed in parallel with Phase 3 and merged. The substance:
+
+- **`mimarchy-setup`** lists every detected device and zone, asks which to
+  drive and how long each strip is, and writes `config.toml` — keeping a
+  timestamped backup and carrying over the display ids and link toggle it has
+  no opinion about. `--list` is a non-interactive listing, and is what a bug
+  report should contain.
+- **`detectors.py`** turns device names into OpenRGB detector names, which is
+  guesswork by necessity: OpenRGB never says which detector produced which
+  device, and the only way to ask is to run detection — the dangerous act
+  itself. It refuses to guess rather than guessing wrong, and `detectors = [...]`
+  in the config is the escape hatch.
+- **`restrict-openrgb-detectors.py`** now derives its allowlist from the
+  configured zones, keeps `--check`, and gained `--discover` (behind a typed
+  confirmation) for the chicken-and-egg the narrowing creates: a list narrowed
+  before your hardware was ever detected can never see your hardware.
+  Deliberately does *not* fall back to the reference four when a config exists
+  but derives nothing — that would enable one particular card's I2C detector
+  because somebody else's rig needed it.
+- **N zones** work end to end. Two places still assumed the pair and were
+  fixed on merge: the TUI drew exactly two rows, and `lightd.plan` read
+  `state.linked` as a global — so while CPU and GPU were linked (the default) a
+  *third* one-LED zone running chase was rendered flat instead of being handed
+  to its firmware. Linking is defined as that pair, and `_linked_pair` is now
+  what both places ask.
+- **Config robustness**: a malformed `[rgb.zones.*]` table is skipped with a
+  message rather than raising, per-zone `leds` lengths are supported, and
+  `rgb.py` resizes only the zones actually configured.
+
+Two things worth carrying forward:
+
+- **The agent's own first cut had a real bug, caught by running it.** Its
+  ambiguity guard was "more than the largest real family", which let a
+  four-card vendor line through — four I2C probes for cards the machine does
+  not have, precisely the failure the guard exists to prevent. Tightened to
+  "one match, or an exact one".
+- **`install.sh` step 2 is still the one unavoidable #4888 exposure.** It runs
+  `openrgb --list-devices` with every detector enabled, because the allowlist
+  cannot be written into a config that does not exist yet. The old comment
+  claimed this was safe because it is one-shot, which misstates the risk; it is
+  now documented honestly. Only skippable on a machine that has run OpenRGB
+  before, which is most of them.
+
+## 7b. Phase 4 as originally specified
 
 What "works on my exact rig" assumes today, and what marketplace users need:
 

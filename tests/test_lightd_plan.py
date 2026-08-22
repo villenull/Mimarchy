@@ -179,20 +179,15 @@ def test_a_third_zone_is_planned_independently_of_the_linked_pair() -> None:
         "cpu_fans": "breathing", "gpu": "breathing", "case": "spectrum"}
 
 
-@pytest.mark.xfail(reason="`plan` reads state.linked as a global rather than as "
-                          "a property of the cpu_fans/gpu pair, so the link "
-                          "blocks a third zone's firmware hand-off too",
-                   strict=True)
 def test_a_third_one_led_zone_reaches_firmware_on_its_own_terms() -> None:
     """The link's colour objection is about the linked pair. A zone outside it
     has no shared colour to mismatch, so it routes on its own effect.
 
-    Currently it does not: `colour_blocks_firmware` is `state.linked and ...`,
-    and `state.linked` is one flag for the whole file. So while CPU and GPU are
-    linked — the default — a third one-LED device running chase is rendered
-    instead of handed over, i.e. shows a flat colour where the hardware could
-    show a travelling head. `_source_target` already knows that linking means
-    *that pair*; this line needs to ask it the same question.
+    It used not to: `colour_blocks_firmware` read `state.linked`, which is one
+    flag for the whole file, so while CPU and GPU were linked — the default — a
+    third one-LED device running chase was rendered instead of handed over, and
+    showed a flat colour where the hardware could show a travelling head.
+    `_linked_pair` is what both that line and `_source_target` now ask.
     """
     st = _state("static", linked=True)
     st.for_target("case").effect = "chase"

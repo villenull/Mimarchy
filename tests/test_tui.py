@@ -43,9 +43,16 @@ def isolated_state(tmp_path, monkeypatch):
 
 
 class _NoWrite:
-    """Stands in for Config so `save_link_state` cannot rewrite the real file."""
+    """Stands in for Config so `save_link_state` cannot rewrite the real file.
+
+    `zones` carries the developer rig's pair because that is what these tests
+    assert about — two rows, collapsing to one when linked. The TUI now draws a
+    row per configured zone rather than a fixed pair, so this is the shape of
+    the config under test rather than an incidental attribute.
+    """
 
     link_cpu_gpu = True
+    zones = {"cpu_fans": None, "gpu": None}
 
     def save_link_state(self, linked: bool, path=None) -> None:
         self.link_cpu_gpu = linked
@@ -116,6 +123,54 @@ async def test_enter_unlinks_into_two_rows() -> None:
         rows = _rows(app)
         assert [r[0] for r in rows] == ["cpu fans", "gpu"]
         assert all("(linked)" not in r[4] for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_a_third_configured_zone_gets_its_own_row(monkeypatch) -> None:
+    """The TUI draws a row per configured zone, not a fixed pair.
+
+    The daemon, `mimarchy-ctl` and the bar widget all handled an extra
+    `[rgb.zones.*]` block; the TUI was the last place still drawing exactly two,
+    so a third strip was invisible in the one place you would go to drive it.
+    The linked pair still collapses into a single row — linking is *defined* as
+    cpu_fans + gpu — and everything else stands alone.
+    """
+    class _ThreeZones(_NoWrite):
+        zones = {"cpu_fans": None, "gpu": None, "case": None}
+
+    monkeypatch.setattr(tui, "load_config", _ThreeZones)
+
+    app = tui.MimarchyApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert [r[0] for r in _rows(app)] == [tui.LINKED_LABEL, "case"]
+
+        await pilot.press("u")
+        await pilot.pause()
+        assert [r[0] for r in _rows(app)] == ["cpu fans", "gpu", "case"]
+
+
+@pytest.mark.asyncio
+async def test_unlinking_carries_the_theme_role_across(monkeypatch) -> None:
+    """Splitting must not quietly stop the GPU following the theme.
+
+    The seed copies the shared entry so the GPU starts where it visibly was.
+    Copying the resolved RGB alone left a GPU that looked identical and had
+    silently become a fixed colour — a difference that would not show until the
+    next theme switch moved one and not the other.
+    """
+    app = tui.MimarchyApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        shared = app.state.for_target("cpu_fans")
+        shared.colour, shared.colour_role = (1, 2, 3), "accent"
+
+        await pilot.press("u")
+        await pilot.pause()
+
+        gpu = app.state.for_target("gpu")
+        assert gpu.colour_role == "accent"
+        assert gpu.colour == (1, 2, 3)
 
 
 @pytest.mark.asyncio

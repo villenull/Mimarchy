@@ -54,10 +54,22 @@ def _seed(zone_key: str) -> int:
     return zlib.crc32(zone_key.encode())
 
 
+def _linked_pair(state: lightstate.LightingState, key: str) -> bool:
+    """Whether this zone is one of the two the link actually joins.
+
+    `state.linked` is a single flag for the whole file, but linking is *defined*
+    as cpu_fans + gpu — a third zone is never part of it. Reading the flag
+    directly made every other zone inherit the pair's constraints: a third
+    one-LED device running chase stayed rendered, showing a flat colour where
+    its firmware could have run a travelling head, for as long as the CPU and
+    GPU happened to be linked. Which is the default.
+    """
+    return state.linked and key in ("cpu_fans", "gpu")
+
+
 def _source_target(state: lightstate.LightingState, key: str):
     """The state entry a zone follows — the shared one while linked."""
-    src = "cpu_fans" if state.linked and key in ("cpu_fans", "gpu") else key
-    return state.for_target(src)
+    return state.for_target("cpu_fans" if _linked_pair(state, key) else key)
 
 
 def rotation(zones: dict[str, int], state: lightstate.LightingState,
@@ -135,7 +147,8 @@ def plan(rgb: RGBController, zones: dict[str, int],
                 rendered[key] = (target, count)
             continue
 
-        colour_blocks_firmware = state.linked and target.effect in COLOUR_EFFECTS
+        colour_blocks_firmware = (_linked_pair(state, key)
+                                  and target.effect in COLOUR_EFFECTS)
         if (count == 1 and target.effect in SPATIAL_EFFECTS
                 and not colour_blocks_firmware
                 and target.effect in rgb.available_modes(key)):

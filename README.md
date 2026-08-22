@@ -31,8 +31,18 @@ install keeps working across the upgrade.
 
 Developed against an ASUS PRIME X870-P WIFI, a Sapphire RX 9070 XT Nitro+, and
 a Balam Rush Heliux Pro HEX75 cooler. Anything OpenRGB can drive should work for
-the lighting; `[rgb.zones]` in the config is how you point it at your own
-devices. The cooler display is specific to that USB device (`5131:2007`).
+the lighting. `mimarchy-setup` finds your devices and writes the config for you
+— it lists every detected zone, asks which ones to drive and how long each strip
+is, and works out which OpenRGB detectors they need. `mimarchy-setup --list`
+prints what it sees without changing anything, which is also the right thing to
+paste into a bug report. The cooler display is specific to that USB device
+(`5131:2007`).
+
+| Tier | What |
+|---|---|
+| Verified | ASUS PRIME X870-P WIFI headers, Sapphire RX 9070 XT Nitro+, Balam Rush HEX75 cooler display |
+| Should work | any OpenRGB device with a `Direct` or `Static` mode; several strips of different lengths; boards other than ASUS, given `detectors = [...]` in the config |
+| Won't work | any cooler LCD other than `5131:2007`; devices OpenRGB itself cannot drive; firmware effects on hardware whose speed curve has not been measured (they run, at approximately the right rate) |
 
 ## Install
 
@@ -50,6 +60,17 @@ integration. Then:
 ```bash
 mimarchy-tui
 ```
+
+If you are not on the hardware this was developed against, run the wizard first:
+
+```bash
+mimarchy-setup
+tools/restrict-openrgb-detectors.py
+systemctl --user restart openrgb.service mimarchy-light.service
+```
+
+The second line narrows OpenRGB to just the devices you picked; the wizard
+prints it for you when it finishes.
 
 Requires Python 3.11+, `openrgb`, and a running Wayland session. Fan RPM
 additionally needs the out-of-tree `nct6687d` driver — temperatures and lighting
@@ -103,6 +124,13 @@ instead of drawing an empty panel.
 > starting the server for the first time. If you set this up by hand, do it in
 > that order — and re-run `tools/restrict-openrgb-detectors.py` after ever
 > opening the OpenRGB GUI, which rewrites the config.
+>
+> The allowlist follows the devices in *your* config, so it is your hardware's
+> rather than this machine's. If `mimarchy-setup` shows no devices at all, that
+> is the narrowing rather than your cabling — nothing can be selected that was
+> never detected. `tools/restrict-openrgb-detectors.py --discover` re-enables
+> everything for one detection pass, behind a typed confirmation; narrow it
+> again as soon as the wizard has your zones.
 
 ## Keys
 

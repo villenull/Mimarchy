@@ -60,9 +60,10 @@ def _targets(state: lightstate.LightingState) -> list[str]:
     try:
         return list(load_config().zones) or ["cpu_fans", "gpu"]
     except (OSError, ValueError, KeyError):
-        # KeyError too: the config is hand-edited and documented as such, and a
-        # zone table missing `device` or `zone` should fall back to the defaults
-        # rather than take the bar widget's poll down with it.
+        # `load_config` now skips a malformed zone table rather than raising, so
+        # KeyError should no longer reach here — kept because this runs on every
+        # bar-widget poll, and the cost of an extra exception class in the tuple
+        # is nothing against a traceback in the user's shell process.
         return ["cpu_fans", "gpu"]
 
 

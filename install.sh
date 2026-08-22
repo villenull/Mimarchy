@@ -2,8 +2,9 @@
 # Install Mimarchy for the current user.
 #
 # Everything here is user-level: a virtualenv, three `systemctl --user` units,
-# and the Waybar/Hyprland snippets. The two steps that need root are printed at
-# the end rather than run, so this never asks for a password.
+# the launcher symlinks, and the desktop integration for whichever Omarchy is
+# installed. The steps that need root are printed at the end rather than run, so
+# this never asks for a password.
 #
 # The ordering matters in one place. OpenRGB's broad GPU/I2C detection is a
 # documented total-system freeze with some cards, and its service is enabled at
@@ -52,7 +53,7 @@ else
   OMARCHY=none
 fi
 
-say "1/5  Python environment"
+say "1/6  Python environment"
 if [[ ! -x "$BIN/python" ]]; then
   mkdir -p "$(dirname "$VENV")"
   python3 -m venv "$VENV"
@@ -61,23 +62,43 @@ fi
 "$BIN/python" -m pip install --quiet -e "$REPO"
 echo "    installed into $VENV"
 
-say "2/5  Narrowing OpenRGB's detector list (before first start)"
+say "2/6  Narrowing OpenRGB's detector list (before first start)"
 if ! command -v openrgb >/dev/null; then
   echo "    openrgb is not installed. Install it, then re-run this script:"
   echo "        sudo pacman -S openrgb"
   exit 1
 fi
-# The config only exists once OpenRGB has run at least once. Listing devices is
-# the cheapest way to create it, and is safe because it is a one-shot process
-# rather than the always-on server.
+# The config only exists once OpenRGB has run at least once, and listing devices
+# is the cheapest way to create it.
+#
+# Be honest about what this costs: it is a full detection pass with every
+# detector enabled — the exact #4888 hazard the rest of this script exists to
+# avoid — because the allowlist cannot be written into a file that is not there
+# yet. A one-shot process is not what makes it safer; the difference is that it
+# happens once, with the user present and watching, instead of on every boot.
+# Machines where the freeze reproduces will hang here, and the honest answer is
+# that this is the one pass that cannot be skipped.
+#
+# Skipped entirely when the config already exists, which is the common case on
+# any machine that has run OpenRGB before.
 if [[ ! -f "$HOME/.config/OpenRGB/OpenRGB.json" ]]; then
   echo "    creating OpenRGB's config"
   openrgb --list-devices >/dev/null 2>&1 || true
 fi
-"$BIN/python" "$REPO/tools/restrict-openrgb-detectors.py"
-"$BIN/python" "$REPO/tools/restrict-openrgb-detectors.py" --check
+# Not fatal when it declines to guess. The tool leaves the detector list exactly
+# as it found it and explains why, and step 4 is where that gets answered — under
+# `set -e` an exit 1 here would abort the install over a config question, leaving
+# the services uninstalled.
+if "$BIN/python" "$REPO/tools/restrict-openrgb-detectors.py"; then
+  "$BIN/python" "$REPO/tools/restrict-openrgb-detectors.py" --check || true
+else
+  # The tool has already said which of its reasons applies — no OpenRGB config
+  # yet, or a config whose devices it will not guess detectors for. Repeating a
+  # guess here would contradict it.
+  echo "    (continuing — the detector list is unchanged; see step 4)"
+fi
 
-say "3/5  User services"
+say "3/6  User services"
 mkdir -p "$UNITS"
 install -m644 "$REPO/systemd/openrgb.service" "$UNITS/openrgb.service"
 for unit in mimarchy-light mimarchy-display; do
@@ -91,13 +112,32 @@ systemctl --user enable --now mimarchy-light.service
 systemctl --user enable mimarchy-display.service
 echo "    openrgb + mimarchy-light started; mimarchy-display enabled but not started"
 
-say "4/5  Launcher and desktop integration"
+say "4/6  Point Mimarchy at your hardware"
+cat <<EOF
+    The shipped config names the developer's board and card. To use your own:
+
+        mimarchy-setup
+
+    then narrow OpenRGB to just what you picked, and restart it:
+
+        $REPO/tools/restrict-openrgb-detectors.py
+        systemctl --user restart openrgb.service mimarchy-light.service
+
+    If mimarchy-setup lists no devices, that is the detector list rather than
+    your cabling: it was narrowed before your hardware was ever detected, and
+    nothing can be selected that was never found. Widen it for one pass:
+
+        $REPO/tools/restrict-openrgb-detectors.py --discover
+        systemctl --user restart openrgb.service
+EOF
+
+say "5/6  Launcher and desktop integration"
 mkdir -p "$HOME/.local/bin"
 ln -sf "$REPO/bin/omarchy-launch-mimarchy" "$HOME/.local/bin/omarchy-launch-mimarchy"
 # mimarchy-ctl is not optional here: the bar widget shells out to it by bare
 # name for every poll and every click, so leaving it inside the venv means a
 # widget stuck on "backend not installed" no matter how well the rest installed.
-for entry in mimarchy-tui mimarchy-ctl; do
+for entry in mimarchy-tui mimarchy-ctl mimarchy-setup; do
   ln -sf "$BIN/$entry" "$HOME/.local/bin/$entry"
 done
 echo "    symlinked into ~/.local/bin"
@@ -124,7 +164,7 @@ case "$OMARCHY" in
   *) echo "    no Omarchy theme found — desktop integration steps skipped" ;;
 esac
 
-say "5/5  Manual steps left"
+say "6/6  Manual steps left"
 
 cat <<EOF
 

@@ -201,7 +201,19 @@ class MimarchyApp(App):
 
     @property
     def targets(self) -> list[str]:
-        return ["cpu_fans+gpu"] if self.linked else ["cpu_fans", "gpu"]
+        """One row per configured zone, the linked pair collapsed into one.
+
+        Driven by `config.zones` rather than by a fixed pair: a third
+        `[rgb.zones.*]` block is one more row, and the daemon, `mimarchy-ctl`
+        and the bar widget all already render it — the TUI was the last place
+        still drawing exactly two. The link stays *defined* as `cpu_fans` +
+        `gpu`, so every other zone is always its own row.
+        """
+        keys = list(self.config.zones) or ["cpu_fans", "gpu"]
+        if not (self.linked and {"cpu_fans", "gpu"} <= set(keys)):
+            return keys
+        return ["cpu_fans+gpu" if k == "cpu_fans" else k
+                for k in keys if k != "gpu"]
 
     def _members(self, target: str) -> list[str]:
         return target.split("+") if "+" in target else [target]
@@ -425,13 +437,21 @@ class MimarchyApp(App):
     def action_toggle_link(self) -> None:
         self._message = ""
         self.linked = not self.linked
-        if not self.linked:
+        if not self.linked and {"cpu_fans", "gpu"} <= set(self.config.zones or
+                                                          {"cpu_fans", "gpu"}):
             # Splitting: seed the GPU from the shared entry so it starts where it
-            # visibly was, rather than jumping to a default.
+            # visibly was, rather than jumping to a default. Guarded on both
+            # zones existing, so a rig configured without a `gpu` zone does not
+            # get a phantom target conjured out of the split.
+            #
+            # `colour_role` travels with the colour: seeding the resolved RGB
+            # alone would leave a GPU that looked identical but had quietly
+            # stopped following the theme, and the difference would only show up
+            # at the next theme switch.
             shared = self.state.for_target("cpu_fans")
             gpu = self.state.for_target("gpu")
-            gpu.effect, gpu.colour, gpu.speed = (shared.effect, shared.colour,
-                                                 shared.speed)
+            gpu.effect, gpu.colour, gpu.speed, gpu.colour_role = (
+                shared.effect, shared.colour, shared.speed, shared.colour_role)
         self.config.save_link_state(self.linked)
         self._after_change()
         self.refresh_hints()
