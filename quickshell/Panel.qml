@@ -217,31 +217,30 @@ Panel {
   // set` rather than pinning a family the user did not choose.
   readonly property string glyph: "󰌵"
 
-  // Dimmed when the LEDs are frozen — either the daemon is stopped or the
-  // effect is `off`. That is the one piece of state worth reading from across
-  // the room, so it is the one the icon spends its only channel on.
+  // Dimmed when the LEDs are frozen — the daemon is stopped, the effect is
+  // `off`, or the backend was never installed. That is the one piece of state
+  // worth reading from across the room, so it is the one the icon spends its
+  // only channel on.
+  //
+  // Expressed as `dimmed` rather than a darkened colour, because those are not
+  // the same thing on a light theme: `barForeground` is near-black there, so
+  // darkening it *raises* the contrast against the bar and the frozen icon
+  // comes out louder than the live one. The base class dims by opacity, which
+  // reads as "quieter" under both.
   readonly property bool lightsLive: lightingActive && effectSummary !== "off"
-  readonly property color iconColor: backendMissing
-    ? Qt.darker(barForeground, 2.0)
-    : (lightsLive ? barForeground : Qt.darker(barForeground, 1.55))
 
   BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
+    // Set as `text` rather than drawn through `iconComponent`: the base class
+    // then renders it through the bar's own font family and `Style.bar.iconFont`,
+    // so it follows `omarchy font set` and matches the size of every other icon
+    // on the bar — and it inherits the optical centring already written for
+    // exactly this case. An `iconComponent` is for icons that are not glyphs.
+    text: root.glyph
     tooltipText: root.tooltip
-
-    iconComponent: Component {
-      Item {
-        OpticalGlyph {
-          anchors.centerIn: parent
-          text: root.glyph
-          fontFamily: Style.font.family
-          fontSize: Style.space(12)
-          color: root.iconColor
-        }
-      }
-    }
+    dimmed: root.backendMissing || !root.lightsLive
 
     onPressed: function (buttonCode) {
       if (buttonCode === Qt.RightButton) root.run(["display", "toggle"])

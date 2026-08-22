@@ -81,28 +81,38 @@ working exactly as before.)
 | Float rule | Hyprland `windowrule` line in `install.sh` step 5c | Wrong syntax — Hyprland config is Lua now (`o.window{…}`) |
 | Install docs | `install.sh` step 5b: "merge into waybar config, `omarchy restart waybar`" | Wrong on v4 regardless |
 
-## 3. Phase 0 — verify on a live Omarchy 4 machine
+## 3. Phase 0 — verify on a live Omarchy 4 machine — **mostly closed**
 
-Everything above was verified against the Omarchy source at v4.0.0+ and the
-22 stock themes, which was enough to build Phase 1 against. What is *not* yet
-confirmed is runtime behaviour on real hardware — so the checks below still
-want doing on the dev machine after `omarchy-upgrade-to-quattro`, and until
-they are, treat the Lua rule and the menu entry as unexercised in anger:
+Findings are in [`docs/omarchy-4-notes.md`](omarchy-4-notes.md).
 
-0. **Load the plugin.** `omarchy plugin validate .`, then
-   `omarchy plugin add`, and watch it actually render: the icon's dim/lit
-   states, the panel's layout at both bar orientations, the wheel and
-   right-click handlers, and the backend-missing message. This is the largest
-   remaining unknown in the whole project — the QML has never been loaded.
-1. `cat ~/.local/state/omarchy/current/theme/colors.toml` — confirm the key
-   set across two or three themes (incl. one light theme with `mode`).
-2. Launch `omarchy-launch-mimarchy` — confirm it opens (in Foot), tiles, and
-   that the TUI's fallback palette path behaves.
-3. `omarchy plugin clone omarchy.clock` — read a built-in bar widget to learn
-   the house QML style, how widgets consume shell theme tokens
-   (`shell.toml`), and the popout/panel idioms.
-4. Confirm the `theme-set` hook fires with the theme name in `$1`.
-5. Record findings in `docs/omarchy-4-notes.md`.
+Most of this list turned out to be answerable from the Omarchy 4.0 source
+rather than from a running desktop, which is the better place to answer it:
+the source is what the desktop is built from, and a mistake caught there
+costs a grep instead of a session. Settled that way: the real
+`omarchy-plugin-validate` passes against this repo; every QML symbol the
+widget uses resolves against `shell/Ui/`, with the bar-icon, panel and
+launch idioms confirmed against working first-party plugins; `qs.Ui` does
+resolve from a third-party plugin directory (`omarchy plugin clone` copies a
+built-in verbatim into one and runs it); the `theme-set.d` path and its `$1`
+contract are right; `omarchy-launch-or-focus-tui` derives the app-id the
+Hyprland rule matches; and the Lua tag and menu keys are all real, including
+`description`, which feeds menu search.
+
+That pass also found a bug — the bar icon bypassed `WidgetButton`'s own
+glyph rendering, so it ignored the bar's font and, on light themes, drew the
+*frozen* state with more contrast than the live one. Fixed to `text` +
+`dimmed`.
+
+What is left needs hardware, and is genuinely the largest remaining unknown:
+
+0. **Load the widget.** The checks above prove nothing is misspelled; they do
+   not prove it runs. Icon lit/dim states, panel layout at both bar
+   orientations, wheel and right-click, backend-missing message.
+1. A user-installed theme's `colors.toml` (the 22 stock ones were parsed in
+   Phase 1), including a light theme with `mode`.
+2. `omarchy-launch-mimarchy` — that it opens in Foot and floats.
+3. The theme hook end to end: switch theme, watch the LEDs follow.
+4. The lighting path itself, which no amount of source reading covers.
 
 ## 4. Phase 1 — parity on v4 (ships first, as 0.2.0) — **done**
 
