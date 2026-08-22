@@ -1,6 +1,10 @@
 """LED control via the OpenRGB SDK.
 
-Covers two independent controllers:
+Drives whatever zones `config.toml` names, on however many controllers they sit
+across — `mimarchy-setup` fills that file in from what OpenRGB detects. The
+development rig has two, and they are worth describing because everything below
+was learned on them:
+
   * the motherboard's ASUS Aura USB controller (CPU cooler fan LEDs), and
   * the Sapphire RX 9070 XT's own controller, reached over I2C on the card.
 
@@ -78,18 +82,29 @@ class RGBError(RuntimeError):
     """OpenRGB is unreachable or has no controllable device."""
 
 
+def connect(host: str = "127.0.0.1", port: int = 6742,
+            name: str = "mimarchy") -> OpenRGBClient:
+    """An SDK client, or `RGBError` with the command that fixes it.
+
+    Shared with `mimarchy-setup`, which connects to the same server to list
+    devices but wants none of the zone preparation below. One copy so the two
+    cannot end up telling the user to start different things.
+    """
+    try:
+        return OpenRGBClient(address=host, port=port, name=name)
+    except Exception as exc:  # noqa: BLE001 - surfaced to the user as a clear error
+        raise RGBError(
+            f"Can't reach the OpenRGB server on {host}:{port} — is it running? "
+            "Try: systemctl --user start openrgb.service"
+        ) from exc
+
+
 class RGBController:
     """Drives every detected LED controller via a running `openrgb --server`."""
 
     def __init__(self, config: Config, host: str = "127.0.0.1", port: int = 6742):
         self._config = config
-        try:
-            self._client = OpenRGBClient(address=host, port=port, name="mimarchy")
-        except Exception as exc:  # noqa: BLE001 - surfaced to the user as a clear error
-            raise RGBError(
-                f"Can't reach the OpenRGB server on {host}:{port} — is it running? "
-                "Try: systemctl --user start openrgb.service"
-            ) from exc
+        self._client = connect(host, port)
 
         if not self._client.devices:
             raise RGBError("OpenRGB is running but detected no devices.")
@@ -97,32 +112,39 @@ class RGBController:
         self._prepare_devices()
 
     def _prepare_devices(self) -> None:
-        """Give each zone a length. Deliberately does *not* touch the mode.
+        """Give each configured zone its length. Deliberately does *not* touch
+        the mode.
 
         Zone sizing has to happen on connect — addressable zones come up at
         `leds=0` and silently swallow colour writes (see the module docstring).
         Mode is a different matter: forcing a direct-drive mode here would reset
         the user's chosen effect every time a client connected. The daemon drives
         modes explicitly instead.
+
+        Only the configured zones, and each to its own length. Resizing every
+        zone on every device to one global number was harmless on a rig where
+        the only two zones were both ours, but OpenRGB drives keyboards, RAM and
+        case fans on the same server — and reshaping a stranger's keyboard
+        because it happens to be plugged in is not this program's business.
         """
         resized = False
-        for device in self._client.devices:
-            for zone in device.zones:
-                # Fixed-length zones (e.g. the GPU's single LED) reject resizing;
-                # only addressable strips need — or accept — it.
-                #
-                # `!=` rather than `<`: growing was all that was ever needed while
-                # the configured length overshot the strip, but shrinking has to
-                # work too. With `<`, lowering `zone_size` to the strip's real
-                # length silently did nothing, and a rainbow kept spanning slots
-                # that drive no LED — which is what made rainbow indistinguishable
-                # from spectrum.
-                if len(zone.leds) != self._config.zone_size:
-                    try:
-                        zone.resize(self._config.zone_size)
-                        resized = True
-                    except Exception:  # noqa: BLE001 - not an addressable zone
-                        pass
+        for key, (_device, zone) in self._targets().items():
+            wanted = self._config.leds_for(key)
+            # Fixed-length zones (e.g. the GPU's single LED) reject resizing;
+            # only addressable strips need — or accept — it.
+            #
+            # `!=` rather than `<`: growing was all that was ever needed while
+            # the configured length overshot the strip, but shrinking has to
+            # work too. With `<`, lowering the length to the strip's real value
+            # silently did nothing, and a rainbow kept spanning slots that drive
+            # no LED — which is what made rainbow indistinguishable from
+            # spectrum.
+            if len(zone.leds) != wanted:
+                try:
+                    zone.resize(wanted)
+                    resized = True
+                except Exception:  # noqa: BLE001 - not an addressable zone
+                    pass
 
         if resized:
             # Zone objects hold stale LED lists after a resize; reconnect so the
@@ -159,7 +181,29 @@ class RGBController:
         return targets[logical_name]
 
     def _kind(self, device) -> str:
-        """Which side of the LOGICAL_MODES table this device sits on."""
+        """Which side of the LOGICAL_MODES table this device sits on.
+
+        Decided by which dialect's mode names the device actually exposes, not
+        by its own name. `radeon` in the name was true of the one card here and
+        is not a property of anything: a GeForce or an Intel card speaking the
+        same `Rainbow Wave` / `Runway` vocabulary would have been read as a
+        motherboard, and every spatial effect it can do would have been quietly
+        unavailable — no error, just a card that never gets handed a firmware
+        mode.
+
+        Counting matches gets both of this rig's controllers right for the same
+        reason it did before (the board offers 5 of the motherboard names and 3
+        of the GPU ones; the card 5 and 2), so the name check survives only as
+        the tie-break, which is also what answers a device reporting no modes at
+        all.
+        """
+        names = {mode.name.lower() for mode in device.modes}
+        score = {
+            kind: sum(1 for m in LOGICAL_MODES.values() if m[kind].lower() in names)
+            for kind in ("motherboard", "gpu")
+        }
+        if score["gpu"] != score["motherboard"]:
+            return max(score, key=score.__getitem__)
         return "gpu" if "radeon" in device.name.lower() else "motherboard"
 
     def _ensure_direct(self, device, force: bool = False) -> None:
@@ -288,6 +332,12 @@ class RGBController:
     #: Measured (speed field, seconds per pass) pairs, from filming the bar and
     #: timing a full traversal. Two anchors per mode is enough because rate goes as
     #: a power of the field, so two points fix the exponent.
+    #:
+    #: Measured on the RX 9070 XT and applied to whatever else turns up, because
+    #: the alternative is not asking the firmware for a rate at all. The result
+    #: on unmeasured hardware is an approximation clamped to that device's own
+    #: reported range — a firmware effect running at the wrong speed rather than
+    #: a firmware effect that never runs.
     _PERIOD_ANCHORS = {
         "rainbow": ((10, 0.61), (250, 10.63)),
         "chase": ((5, 1.26), (50, 10.83)),
