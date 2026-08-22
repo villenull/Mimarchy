@@ -6,14 +6,21 @@ is a permanent problem rather than a one-off: this project is developed against
 one specific board and card, and nobody else has them. With this running, the
 whole stack can be exercised on any machine —
 
-    tools/fake-openrgb-server.py 6788 &
-    mimarchy-setup --list --port 6788
-    mimarchy-setup --port 6788          # writes a config against these devices
-    mimarchy-lightd --once              # logs the resize and frame writes
+    tools/fake-openrgb-server.py 6742 &
+    mimarchy-setup --list
+    mimarchy-setup                      # writes a config against these devices
+    ~/.local/share/mimarchy/venv/bin/mimarchy-lightd --once   # resize + frames
 
 — which is what makes "does a third strip actually work" answerable by running
 it rather than by reading the code. It logs what it receives, so a wrong zone
 length or a frame going to the wrong device shows up directly.
+
+Port 6742 rather than something out of the way, because `mimarchy-lightd` has
+no `--port`: it connects where `rgb.connect()` defaults, so the stub has to
+stand exactly where the real server would. Only run it when OpenRGB itself is
+not. And `mimarchy-lightd` is spelled out in full because `install.sh` symlinks
+only the three user-facing entry points into `~/.local/bin` — the daemons are
+started by systemd, so they stay in the virtualenv.
 
 It is a stub, not an implementation: it speaks the handshake and the two
 enumeration packets and accepts writes, and nothing else. Anything beyond
@@ -114,6 +121,14 @@ def serve(conn):
         elif packet_type == u.PacketType.RGBCONTROLLER_RESIZEZONE:
             zone_id, size = struct.unpack("ii", body)
             z = DEVICES[device_id].zones[zone_id]
+            # Clamped to the zone's own bounds, because the real server does and
+            # because the difference is invisible until it matters: a fixed zone
+            # (leds_min == leds_max, e.g. the GPU's single LED) silently ignores
+            # a resize, and `rgb.py` relies on exactly that to keep a one-LED
+            # zone from being handed a 15-LED frame. A stub that accepts any
+            # size validates a path the hardware does not have.
+            requested = size
+            size = max(z.leds_min, min(size, z.leds_max))
             z.num_leds = size
             z.leds = [u.LEDData(name=f"{z.name} {i}", value=0)
                       for i in range(size)]
@@ -121,10 +136,37 @@ def serve(conn):
             dev = DEVICES[device_id]
             dev.leds = [led for zz in dev.zones for led in zz.leds]
             dev.colors = [u.RGBColor(0, 0, 0) for _ in dev.leds]
-            print(f"resize: device {device_id} zone {zone_id} -> {size}",
+            print(f"resize: device {device_id} zone {zone_id} -> {size}"
+                  + ("" if size == requested else f" (requested {requested}, "
+                     f"clamped to [{z.leds_min}, {z.leds_max}])"),
                   flush=True)
         elif packet_type == u.PacketType.RGBCONTROLLER_UPDATEZONELEDS:
             print(f"frame: device {device_id}, {len(body)} bytes", flush=True)
+        elif packet_type == u.PacketType.RGBCONTROLLER_UPDATEMODE:
+            # Logged and applied, because a single-LED zone is where the daemon
+            # stops rendering and hands a spatial effect to the card's own
+            # firmware instead (see lightd's `_split_targets`). That branch
+            # sends a mode, never a frame — so a stub that only logs frames
+            # shows silence exactly where the interesting thing happened.
+            # `ModeData.pack` writes a 4-byte total size, then the mode id,
+            # then the body `ModeData.unpack` expects — so the parse starts at
+            # 8, not 0. Reading the id from offset 0 yields the packet length,
+            # which is a plausible-looking small integer and therefore lands as
+            # a valid-looking `active_mode` that indexes past the mode list on
+            # the next connect.
+            mode_id = struct.unpack("i", body[4:8])[0]
+            dev = DEVICES[device_id]
+            try:
+                md = u.ModeData.unpack(iter(body[8:]), VERSION)
+                detail = f"{md.name!r}"
+                if md.speed is not None:
+                    detail += f" speed={md.speed}"
+            except Exception:  # noqa: BLE001 - a stub logs what it can
+                detail = f"<unparsed, {len(body)} bytes>"
+            if 0 <= mode_id < len(dev.modes):
+                dev.active_mode = mode_id
+            print(f"mode:  device {device_id} -> [{mode_id}] {detail}",
+                  flush=True)
         elif packet_type in (u.PacketType.REQUEST_PROFILE_LIST,
                              u.PacketType.REQUEST_PLUGIN_LIST):
             empty = struct.pack("IH", 6, 0)
