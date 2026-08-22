@@ -37,6 +37,7 @@ Homepage = "https://github.com/villenull/mimarchy"
 [project.scripts]
 mimarchy-tui = "mimarchy.tui:main"
 mimarchy-ctl = "mimarchy.ctl:main"
+mimarchy-setup = "mimarchy.setup:main"
 mimarchy-displayd = "mimarchy.displayd:main"
 mimarchy-lightd = "mimarchy.lightd:main"
 

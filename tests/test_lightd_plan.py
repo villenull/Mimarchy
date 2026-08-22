@@ -161,6 +161,50 @@ def test_linked_zones_read_one_shared_entry() -> None:
         "cpu_fans": "breathing", "gpu": "breathing"}
 
 
+def test_a_third_zone_is_planned_independently_of_the_linked_pair() -> None:
+    """`cpu_fans` and `gpu` are two config keys, not the design.
+
+    Linking is *defined* as that pair, so a third zone must keep its own effect
+    while they share one — otherwise "add another strip" would silently mean
+    "make everything match", and the extra `[rgb.zones.*]` block the README
+    advertises would be a lie.
+    """
+    st = _state("breathing", linked=True)
+    st.for_target("case").effect = "spectrum"
+
+    rendered, firmware = plan(FakeRGB(), {**ZONES, "case": 30}, st)
+
+    assert firmware == {}
+    assert {k: v[0].effect for k, v in rendered.items()} == {
+        "cpu_fans": "breathing", "gpu": "breathing", "case": "spectrum"}
+
+
+@pytest.mark.xfail(reason="`plan` reads state.linked as a global rather than as "
+                          "a property of the cpu_fans/gpu pair, so the link "
+                          "blocks a third zone's firmware hand-off too",
+                   strict=True)
+def test_a_third_one_led_zone_reaches_firmware_on_its_own_terms() -> None:
+    """The link's colour objection is about the linked pair. A zone outside it
+    has no shared colour to mismatch, so it routes on its own effect.
+
+    Currently it does not: `colour_blocks_firmware` is `state.linked and ...`,
+    and `state.linked` is one flag for the whole file. So while CPU and GPU are
+    linked — the default — a third one-LED device running chase is rendered
+    instead of handed over, i.e. shows a flat colour where the hardware could
+    show a travelling head. `_source_target` already knows that linking means
+    *that pair*; this line needs to ask it the same question.
+    """
+    st = _state("static", linked=True)
+    st.for_target("case").effect = "chase"
+
+    rgb = FakeRGB()
+    rgb.available_modes = lambda key: ("rainbow", "chase")
+    _rendered, firmware = plan(rgb, {**ZONES, "case": 1}, st)
+
+    assert firmware["case"][0] == "chase"
+    assert "gpu" not in firmware
+
+
 def test_zone_seeds_are_stable_and_distinct() -> None:
     """Unhinged decorrelates zones from these, so they must differ — and must not
     change between daemon restarts, which rules out `hash()`."""

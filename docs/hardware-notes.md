@@ -41,11 +41,28 @@ are disabled except four:
     ASUS Aura Addressable, ASUS Aura Core, ASUS Aura Motherboard,
     Sapphire Radeon RX 9070 XT Nitro+
 
-`tools/restrict-openrgb-detectors.py` applies exactly that set and `--check`
-verifies it. `install.sh` runs it *before* the server ever starts, which is the
-order that matters — the service starts at login, so an unrestricted config means
-a freeze on every boot. **Re-run it after opening the OpenRGB GUI**, which
-rewrites the config and can re-enable everything.
+`tools/restrict-openrgb-detectors.py` applies that set and `--check` verifies it.
+`install.sh` runs it *before* the server ever starts, which is the order that
+matters — the service starts at login, so an unrestricted config means a freeze
+on every boot. **Re-run it after opening the OpenRGB GUI**, which rewrites the
+config and can re-enable everything.
+
+Those four are this machine's, not the tool's: the allowlist comes from the
+devices in `config.toml`, which `mimarchy-setup` fills in from what OpenRGB
+detects. Working out which detector produced which device is guesswork, because
+OpenRGB never says — the SDK reports device names and the config file lists
+detector names, with no shared id, and the only way to ask directly is to run
+detection, which is the dangerous act. So the matching in `mimarchy/detectors.py`
+is deliberately timid: a device name that matches two detectors without matching
+either exactly is refused rather than guessed at, since a missed detector is a
+dark zone somebody reports and a spurious one is a locked-up desktop nobody can.
+`detectors = [...]` in `config.toml` overrides the lot.
+
+There is one unavoidable chicken-and-egg in this. The list is narrowed before the
+server first starts, so a machine whose hardware was never in that narrow set
+sees no devices at all — and nothing can be selected that was never detected.
+`--discover` re-enables everything for one detection pass, behind a typed
+confirmation, which is the same state a stock OpenRGB install is in permanently.
 
 ## Effects are rendered in software, not by the controllers
 
