@@ -173,6 +173,18 @@ The parts worth specifying now:
   part of this phase, not Phase C — the swatches outlive the window they were
   written for.
 - **Sensors come out**, including the temperature half of the tooltip.
+- **The panel has to be keyboard-drivable**, because retiring the TUI is
+  otherwise where keyboard operation goes. Omarchy 4 supports this properly and
+  the widget already sits on the right primitives — `KeyboardPanel` with
+  `focusTarget: keyCatcher`, which is what every first-party panel does, and
+  `KeyboardPanel` exists specifically so a panel can be summoned by key at all
+  (an xdg-popup only gets keys after a click routes focus to it). What is
+  missing is a cursor: today the panel has nothing to select, so it only uses
+  `PanelKeyCatcher`'s `textKey`. Always-open turns it into a 2D field — N zones
+  by seven effects, eight swatches and five stops — which needs
+  `moveRequested`/`activateRequested` wired the way `bluetooth/Panel.qml` drives
+  `moveCursor`/`activateCursor`. Keep the existing letters (`d`, `u`, `+`, `-`)
+  and add `1`–`6`/`0` for effects, so the TUI's muscle memory survives it.
 
 ## Phase C — remove the TUI
 
@@ -187,8 +199,14 @@ complete.
 - Rewrite the README: the install section, the key table, and the framing. The
   current opening — "a single-screen TUI" — becomes a bar widget, and the
   "runs anywhere, falls back to your terminal's colours" story goes with it.
-- `omarchy/mimarchy-menu.jsonc` currently launches the TUI. Either point it at
-  the panel's IPC (`omarchy-shell mimarchy toggle`) or drop the menu entry.
+- `omarchy/mimarchy-menu.jsonc` currently launches the TUI. Point it at the
+  panel instead.
+- **Ship a keybinding suggestion in its place.** The stock bindings are all
+  `o.bind("SUPER + CTRL + B", "Bluetooth", "omarchy-shell shell toggle
+  omarchy.bluetooth")`, and the generic form works for a third-party id —
+  verified with `omarchy-shell shell toggle io.github.villenull.mimarchy`. That
+  is the direct replacement for `omarchy-launch-mimarchy`, and it means the
+  Hyprland float rule retires with the window it was floating.
 
 **What survives, and should be said out loud:** `mimarchy-ctl` becomes the only
 interface that works over SSH or on a machine without Omarchy. Phase A is what
