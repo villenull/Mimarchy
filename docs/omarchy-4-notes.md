@@ -101,18 +101,105 @@ either polarity. (Same class of light-theme inversion as the role collapse
 Phase 3 hit; worth assuming it recurs anywhere a colour is derived by
 darkening.)
 
-## Still open — needs hardware
+## The live session — Omarchy 4.0.0-1, 2026-08-22
 
-1. **Load the widget.** Nothing here proves the QML *runs*; it proves nothing
-   is misspelled. Watch the icon's lit/dim states, the panel at both bar
-   orientations, wheel and right-click, and the backend-missing message.
-2. **Both bar orientations.** `vertical` changes `BarIconButton`'s sizing
-   (`fixedWidth` vs `fixedHeight`) and the panel's anchoring.
-3. **The theme hook end to end** — switch themes and watch the LEDs follow.
-4. **`colors.toml` on this machine's themes**, including a light one with
-   `mode`. The 22 stock themes were parsed in Phase 1; a user-installed theme
-   has not been.
-5. **The whole lighting path**, which no amount of source reading covers.
+Run on the development rig itself (ASUS PRIME X870-P WIFI, RX 9070 XT Nitro+,
+Omarchy 4.0.0-1, Python 3.14.7), with `tools/fake-openrgb-server.py` standing in
+for OpenRGB so the lighting path could be exercised before the one-shot detection
+pass that #4888 makes expensive to get wrong.
+
+### The widget loaded, and was invisible
+
+This is the item Phase 0 said was the largest remaining unknown, and it was
+right to say so. Every check that could be made without running it passed —
+`omarchy plugin validate` exits 0, the shell logged `Local plugin changed,
+reloading` with no QML error of any kind, and `omarchy plugin list` reported
+`enabled`. `omarchy-shell shell debugBarGeometry` is what actually told the
+truth:
+
+    io.github.villenull.mimarchy   x=3216  w=0  h=0  visible=false  itemVisible=true
+
+The component instantiated; it was laid out at zero size. `Ui/Panel` is a bare
+`Item` and has no implicit size of its own, and the root bound none — so the
+`BarIconButton` anchored to it with `anchors.fill: parent` filled nothing. Every
+first-party widget binds both; `bluetooth/Panel.qml` takes them from its button.
+Fixed by doing the same, and `tests/test_bar_widget_qml.py` now asserts it,
+because the failure is completely silent: no error, no warning, and two separate
+status commands reporting the widget as installed and enabled.
+
+One thing to know when iterating: editing the file under
+`~/.config/omarchy/plugins/` hot-reloaded it but did **not** re-evaluate the
+root's implicit-size binding — the widget stayed at 0x0 until a full `omarchy
+restart shell`. Hot reload is reliable for what a component *draws*; it is not
+for what the bar *measures*.
+
+### `active: false` is not a fault
+
+`omarchy plugin list --json` reports `active: false` for this widget, and that
+is correct rather than a symptom. `shell.qml`'s `listPlugins` computes
+`active = isBarOption && isActiveBarOption(id)`, where `isBarOption` means the
+manifest declares kind `bar` — a whole-bar replacement. A `bar-widget` is never
+a bar option, so `active` is false for every one of them, first-party included.
+The field to read is `enabled`, which for a widget is `inBar(id)`.
+
+### What the live run confirmed
+
+- **Both icon states.** Dimmed with `mimarchy-light.service` stopped, full
+  brightness with it running, at the same size and family as its neighbours —
+  which is the `text` + `dimmed` fix drawn through `WidgetButton` rather than an
+  `iconComponent`.
+- **The panel**, on a horizontal top bar: header, all three zones with effect
+  and speed, the sensor row, both toggles and the launch button, in theme
+  colours. It updates live — `mimarchy-ctl link toggle` and `effect chase` were
+  both reflected without touching the panel.
+- **Three zones through the whole stack.** `mimarchy-setup` wrote a config for a
+  board zone, a GPU zone and a *third* strip at a different length (20 vs 15),
+  the daemon resized each to its own length, and all three appear in the widget.
+- **Graceful degradation, twice.** `openrgb.service` fails to start with no
+  OpenRGB installed and `mimarchy-light.service` runs anyway — `Wants=` is
+  correctly not `Requires=`. And with no `nct6687d`, fan RPM reads `null` from
+  `mimarchy-ctl` and `fan —` in the panel rather than a zero.
+- **The v4 theme reader, on live themes.** `theme_dirs()` puts the state path
+  first and parses the active theme; all 22 stock themes on the machine parse as
+  v4, five of them light with `mode`. The only `led_colour` gaps are `orange` on
+  `last-horizon`, `solitude` and `white` — the three the code already predicts.
+
+### The stub was looser than the hardware
+
+`tools/fake-openrgb-server.py` accepted a resize on a zone declaring
+`leds_min == leds_max == 1`, which real OpenRGB ignores. That is not a cosmetic
+difference: it meant the one-LED GPU zone came up at 15 LEDs, so the daemon took
+the *rendered* branch for it every time and the firmware hand-off in
+`lightd._split_targets` — the subtlest thing Phase 4 added — had never once been
+exercised. With the stub clamping to the zone's own bounds, the whole decision
+tree is visible in its log:
+
+| effect | the one-LED GPU zone | the other two |
+|---|---|---|
+| `rainbow` | firmware `Rainbow Wave`, speed matched, **no frame** | rendered |
+| `chase` | `Static` + a rendered 1-LED frame | rendered |
+| `static` / `spectrum` / `breathing` / `unhinged` | rendered 1-LED frame | rendered |
+
+Which is exactly what the docstring claims: rainbow goes to firmware even while
+linked, chase stays rendered while linked. The stub now also logs and applies
+mode changes, since a stub that only logs frames shows silence precisely where
+the interesting branch was taken.
+
+## Still open — needs the real lighting
+
+1. **The lighting path on real hardware.** Everything above ran against the
+   stub. `openrgb` is not installed on the machine yet, and installing it means
+   the one-shot detection pass in `install.sh` step 2 — the #4888 hazard this
+   rig is known to reproduce.
+2. **A vertical bar.** `vertical` changes `BarIconButton`'s sizing (`fixedWidth`
+   vs `fixedHeight`) and the panel's anchoring, and the sizing bug above is a
+   reminder that this is the kind of thing only a running bar answers.
+3. **Wheel and right-click**, and the backend-missing message.
+4. **The theme hook end to end** — switch themes and watch the LEDs follow.
+   Needs the LEDs.
+5. **A user-installed theme's `colors.toml`.** The machine has only the 22 stock
+   themes.
+6. **`omarchy-launch-mimarchy`** — that it opens in Foot and floats.
 
 ## Running the test session
 
