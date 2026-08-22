@@ -143,3 +143,20 @@ VBUS cannot be cut in software either.
 
 The blank timeout is **50.35 s**, filmed and reproduced across two five-trial
 runs at sigma 0.02 and 0.04. Sending frames faster does not shorten it.
+
+## Testing without the hardware
+
+`tools/fake-openrgb-server.py` is a stub SDK server that serves a board, a
+one-LED GPU and a third strip, so the whole stack can be exercised on a machine
+that has none of them:
+
+```bash
+tools/fake-openrgb-server.py 6788 &
+mimarchy-setup --list --port 6788
+mimarchy-setup --port 6788      # writes a config against those devices
+mimarchy-lightd --once          # logs the resizes and frame writes it performs
+```
+
+It logs what it receives, so a zone resized to the wrong length or a frame sent
+to the wrong device is visible directly. It speaks the handshake, the two
+enumeration packets, and writes — anything past that needs adding to it.
