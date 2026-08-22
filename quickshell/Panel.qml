@@ -147,12 +147,35 @@ Panel {
       }
     }
 
+    // Whether *this* attempt got as far as a running process. Reset per launch,
+    // because it is the only thing that separates the two ways a poll ends.
+    property bool launched: false
+
+    onStarted: statusProcess.launched = true
+
     onExited: function (exitCode) {
-      // 127 is the shell's "command not found"; Quickshell surfaces a failure
-      // to launch the same way. Either means the Python side was never
-      // installed, which is a supported half-state — `omarchy plugin add`
-      // deliberately runs no install hooks, so the widget can arrive first.
+      // A backend that ran and failed. Distinct from the case below: this one
+      // is installed, so the message it earns is about the exit code, not about
+      // installing it.
       if (exitCode !== 0 && !root.status) root.backendMissing = true
+    }
+
+    // The case `onExited` cannot see. A command that is not on PATH never
+    // starts, so Quickshell emits neither `started` nor `exited` — it logs
+    // "Process failed to start" and drops `running` back to false with a null
+    // processId, and that lone signal is the entire report. Watching for exit
+    // 127 instead, which is what a *shell* would have returned, meant
+    // `backendMissing` was never set at all: the panel fell through to
+    // "Lighting daemon stopped — LEDs frozen", which sends someone to
+    // `systemctl` over a program that was never installed.
+    //
+    // Measured rather than assumed, because the two orderings are what make
+    // this safe: a healthy poll reports running=true, started, exited, then
+    // running=false, so `launched` is always set before this runs.
+    onRunningChanged: {
+      if (running) return
+      if (!launched && !root.status) root.backendMissing = true
+      launched = false
     }
   }
 
@@ -228,6 +251,15 @@ Panel {
   // comes out louder than the live one. The base class dims by opacity, which
   // reads as "quieter" under both.
   readonly property bool lightsLive: lightingActive && effectSummary !== "off"
+
+  // The bar sizes a widget from its implicit size, and `Panel` has none of its
+  // own — so without this the root measures 0x0, the button anchored to it
+  // fills nothing, and the icon is laid out with zero width. It still loads and
+  // still reports itself as in the bar; it is simply never drawn, which is why
+  // resolving every symbol in this file said nothing about it. Taken from the
+  // button because the button is the whole of what this widget puts on the bar.
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
 
   BarIconButton {
     id: button
