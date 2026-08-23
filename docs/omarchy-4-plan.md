@@ -488,9 +488,10 @@ Don't out-broaden OmaRGB; be the thing it isn't:
    controller-native effects can't do this (no speed control, free-running
    clocks). Theme-following (Phase 3) closes the one gap where OmaRGB is
    ahead.
-3. **TUI + widget, not widget-only.** A real keyboard-driven control surface
-   in the `btop`/`lazygit` tradition Omarchy celebrates, with the bar panel
-   for the glanceable 90%.
+3. **Keyboard-driven, not mouse-only.** The bar panel takes a cursor —
+   hjkl/arrows, direct 1-6/0 effect selection — so lighting is drivable start
+   to finish without a mouse, in the `btop`/`lazygit` tradition Omarchy
+   celebrates, with no second window to open for it.
 4. **The safety story.** The detector-restriction tooling that prevents a
    documented hard freeze (OpenRGB #4888) — worth a "why is this safe"
    section in the listing, since the security-baseline flags (§below) will
@@ -501,7 +502,7 @@ Don't out-broaden OmaRGB; be the thing it isn't:
 
 Positioning line to the effect of: *"OmaRGB paints your devices to match
 your theme. Mimarchy makes your cooler and GPU perform it — synced animated
-effects, live telemetry on the cooler's display, and a TUI to drive it."*
+effects, live telemetry on the cooler's display, all driven from the bar."*
 
 ### Submission mechanics
 
@@ -529,7 +530,7 @@ effects, live telemetry on the cooler's display, and a TUI to drive it."*
 ### Launch sequence
 
 1. 0.4.x on `main`, validated, preview media recorded (GIF of a theme
-   switch restyling bar + TUI + LEDs + cooler display in one cut — the whole
+   switch restyling bar + panel + LEDs + cooler display in one cut — the whole
    pitch in five seconds).
 2. Submit listing; answer review.
 3. Announce where the ecosystem actually looks: the omarchy subreddit,

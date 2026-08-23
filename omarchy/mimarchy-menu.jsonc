@@ -24,9 +24,9 @@
     "icon": "󰌵",
     "label": "Mimarchy",
     "description": "LEDs, sensors, cooler display",
-    "action": "omarchy-launch-mimarchy",
+    "action": "omarchy-shell shell toggle io.github.villenull.mimarchy",
     // Hide the row on a machine where the install has been removed, rather
     // than leaving a menu entry that opens nothing.
-    "when": "command -v omarchy-launch-mimarchy >/dev/null"
+    "when": "command -v mimarchy-ctl >/dev/null"
   }
 }

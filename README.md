@@ -2,13 +2,14 @@
 
 **Omarchy-native LED control for CPU cooler fans and GPU.**
 
-A single-screen TUI for the ARGB lighting on a CPU cooler's fans and a graphics
-card, plus the cooler's built-in temperature display. It is built for
+A bar panel for the ARGB lighting on a CPU cooler's fans and a graphics card,
+plus the cooler's built-in temperature display. It is built for
 [Omarchy](https://omarchy.org/) specifically: it takes every colour from your
-active Omarchy theme at startup, and it opens as a floating terminal window in
-the style Omarchy uses for its own TUIs. Lighting reaches the motherboard
-headers and the card over the OpenRGB SDK; the cooler's display is driven
-directly over HID with a protocol reverse-engineered for it.
+active Omarchy theme at startup, and it lives in the bar the way Omarchy's own
+first-party panels do — click the icon, get the panel, nothing else to open.
+Lighting reaches the motherboard headers and the card over the OpenRGB SDK;
+the cooler's display is driven directly over HID with a protocol
+reverse-engineered for it.
 
 Runs on **Omarchy 4** and on Omarchy 3.x. Both theme formats are read, so an
 install keeps working across the upgrade.
@@ -21,10 +22,9 @@ install keeps working across the upgrade.
   all rendered in software from one clock so both devices stay in phase.
 - **Linked or independent** — CPU and GPU move together by default; unlink to
   drive them separately.
-- **Theme-driven, including the LEDs** — no colour is hardcoded. The TUI takes
-  its palette from your Omarchy theme, and the lighting itself can too: pick
-  `theme` as a colour and the strips follow every theme switch, live.
-- **Sensors** — CPU and GPU temperature, fan RPM.
+- **Theme-driven, including the LEDs** — no colour is hardcoded. The panel
+  takes its palette from your Omarchy theme, and the lighting itself can too:
+  pick `theme` as a colour and the strips follow every theme switch, live.
 - **Cooler display** — streams live temperature and fan speed to the panel.
 
 ## Hardware
@@ -55,11 +55,8 @@ cd mimarchy
 That creates a virtualenv, narrows OpenRGB's detector list, installs and starts
 the user services, and prints the two or three steps that need root or a config
 merge. It detects which Omarchy you are on and prints the matching desktop
-integration. Then:
-
-```bash
-mimarchy-tui
-```
+integration — see below for adding the bar icon, and for a keybinding that
+opens the panel directly.
 
 If you are not on the hardware this was developed against, run the wizard first:
 
@@ -88,10 +85,26 @@ omarchy plugin add https://github.com/villenull/mimarchy --enable
 ```
 
 That gives you the bar widget: a bulb icon that dims when the LEDs are frozen,
-and a panel with effect, speed, temperatures, fan RPM, and toggles for the
-cooler display and the CPU/GPU link. Left click opens it, right click toggles
-the display, scroll changes speed. The TUI is one click away and is still the
-place to actually choose effects.
+and a panel with effect, colour and speed for every zone, plus toggles for the
+cooler display and the link. Left click opens the panel, right click toggles
+the display, middle click toggles the link, scroll changes speed. There is no
+second window behind it — the panel is the entire interface, effects included.
+
+A keybinding is worth adding too, for opening the panel without touching the
+mouse. Every first-party Omarchy panel answers to the same idiom — `SUPER +
+CTRL + B` for Bluetooth, `SUPER + CTRL + D` for Display, and so on — so this
+follows it:
+
+```lua
+o.bind("SUPER + CTRL + M", "Mimarchy", "omarchy-shell shell toggle io.github.villenull.mimarchy")
+```
+
+in `~/.config/hypr/hyprland.lua`. `SUPER + CTRL + <letter>` is claimed for
+every letter except `G`, `J`, `M`, `U` and `Y` — checked against every binding
+in `/usr/share/omarchy/default/hypr/bindings/*.lua` (`utilities.lua`,
+`applications.lua`, `clipboard.lua`, `media.lua`, `tiling.lua`,
+`voxtype.lua`). `M` is the one that reads as this plugin's name; pick another
+free letter if your own config has already claimed it.
 
 The virtualenv is created in `~/.local/share/mimarchy/` rather than inside the
 checkout, which matters here: `omarchy plugin validate` refuses a symlink
@@ -104,7 +117,6 @@ Two optional extras, both printed by the installer:
 | File | Merge into | Gives you |
 |---|---|---|
 | [`omarchy/mimarchy-menu.jsonc`](omarchy/mimarchy-menu.jsonc) | `~/.config/omarchy/extensions/omarchy-menu.jsonc` | Mimarchy in the Omarchy menu and its search |
-| [`omarchy/mimarchy.lua`](omarchy/mimarchy.lua) | `~/.config/hypr/hyprland.lua` | the TUI floats instead of tiling |
 
 The plugin deliberately installs no backend of its own — `omarchy plugin add`
 never runs install hooks or asks for sudo, which is exactly the property that
@@ -134,24 +146,35 @@ instead of drawing an empty panel.
 
 ## Keys
 
+The panel takes a keyboard cursor, the same way Omarchy's other bar panels do:
+open it, then move without ever touching the mouse.
+
 | Key | Action |
 |---|---|
-| `1`–`6` | static / rainbow / spectrum / chase / breathing / unhinged |
-| `0` | off |
-| same number again | next colour, for effects that take one |
-| `←` `→` | speed down / up (`-` and `+` also work) |
-| `↑` `↓` | move the selection |
-| `u` | link / unlink CPU and GPU |
+| `h` `j` `k` `l`, arrow keys | move the cursor |
+| `Enter` / `Space` | activate whatever the cursor is on |
+| `1`–`6` | set the cursor's zone to static / rainbow / spectrum / chase / breathing / unhinged |
+| `0` | set the cursor's zone to off |
+| `+` `-` | speed up / down, every zone |
+| `u` | link / unlink all zones |
 | `d` | cooler display on / off |
+| `Escape` | close the panel |
 
-There is deliberately no quit key — this is an overlay, closed by closing its
-window the way Omarchy's own floating TUIs are. `Ctrl+C` still works.
+`1`–`6` and `0` are scoped to wherever the cursor is standing: with the cursor
+on the GPU's effect row, pressing `3` sets the GPU to spectrum without
+touching anything linked to it. `u`, `d`, `+` and `-` stay global regardless of
+the cursor — they are the same coarse controls the bar icon already exposes
+through its wheel and its clicks, so the same keystroke should not mean two
+different things depending on a cursor the user may not have summoned yet. The
+first press of a movement key only reveals the cursor rather than moving it,
+so it never jumps in from off-screen.
 
-## Without the TUI
+## mimarchy-ctl
 
-`mimarchy-ctl` drives the same state from a script, a Hyprland keybinding, or
-the bar widget — which is exactly what the widget does, rather than reaching
-into the state file itself.
+The panel is not the only interface. `mimarchy-ctl` drives the same state from
+a script, a Hyprland keybinding, an SSH session, or a machine with no Omarchy
+desktop at all — and it is exactly what the panel itself calls, rather than
+reaching into the state file directly.
 
 ```bash
 mimarchy-ctl status            # or --json, which is what the widget reads
@@ -162,17 +185,17 @@ mimarchy-ctl display toggle    # on / off / toggle
 mimarchy-ctl link toggle
 ```
 
-Writes go through the same atomic write-then-rename the TUI uses, so a bar click
-and a keypress cannot interleave into a half-written file. Nothing here talks to
+Writes go through an atomic write-then-rename, so a panel click and a scripted
+write cannot interleave into a half-written file. Nothing here talks to
 hardware; `mimarchy-lightd` still owns that.
 
 ### Lighting that follows your theme
 
 Give a colour a *role* — `accent`, `red`, `orange`, `yellow`, `green`, `cyan`,
 `blue`, `magenta` — instead of a value, and it re-resolves whenever you change
-Omarchy themes. In the TUI, `theme` is the first entry in the colour cycle, so
-pressing an effect's number key twice lands on it. The state file stores the
-role, so it keeps following across reboots.
+Omarchy themes. In the panel, `theme` is the first chip in each zone's swatch
+row, ahead of the seven fixed colours. The state file stores the role, so it
+keeps following across reboots.
 
 `install.sh` puts a hook in `~/.config/omarchy/hooks/theme-set.d/` that calls
 `mimarchy-ctl reload-theme` after a theme switch; the daemon picks the new
