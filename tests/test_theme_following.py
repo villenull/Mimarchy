@@ -66,9 +66,7 @@ def write_theme(directory: Path, body: str) -> Path:
 def xdg(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    theme.palette.cache_clear()
-    yield tmp_path
-    theme.palette.cache_clear()
+    return tmp_path
 
 
 def v4_dir(root: Path) -> Path:
@@ -193,14 +191,12 @@ def ctl_env(tmp_path, monkeypatch):
     monkeypatch.setattr(ctl, "read_cpu_fan_rpm", lambda data=None: None)
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state_home"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config_home"))
-    theme.palette.cache_clear()
 
     state = lightstate.LightingState()
     state.for_target("cpu_fans")
     state.for_target("gpu")
     lightstate.save(state)
     yield tmp_path
-    theme.palette.cache_clear()
 
 
 def theme_dir(root: Path) -> Path:
