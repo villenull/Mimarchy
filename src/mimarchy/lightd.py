@@ -16,7 +16,7 @@ in phase by construction, speed is ours to pick, and changing effect is just a
 different frame rather than a mode negotiation.
 
 The cost is that lighting only animates while this runs — which is why it's a
-service rather than something the TUI does while open.
+service rather than something the panel does while open.
 """
 
 from __future__ import annotations

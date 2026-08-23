@@ -48,7 +48,7 @@ def set_unit(unit: str, running: bool) -> str | None:
 
     The message is the last line of stderr rather than the whole of it: systemd
     is happy to explain a failure over five lines, and the caller here is a
-    one-line status field in a TUI or a bar panel. The synthesised fallback
+    one-line status field in a bar panel. The synthesised fallback
     names the unit rather than saying "the display", which was right when this
     only ever drove the display and is wrong now that it also drives the
     lighting daemon.

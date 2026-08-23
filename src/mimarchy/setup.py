@@ -51,7 +51,7 @@ from mimarchy.rgb import RGBError, connect
 #: regardless of naming — but the shared state is keyed off the first zone in
 #: config order, and `cpu_fans` is the name that puts the motherboard header
 #: there. Suggesting these two names for the devices they describe is the
-#: difference between `u` in the TUI doing something recognisable and doing
+#: difference between `u` in the panel doing something recognisable and doing
 #: something arbitrary.
 SUGGESTED_KEYS = {
     "motherboard": "cpu_fans",
@@ -381,7 +381,7 @@ def render_config(selections: list[Selection], detector_names: list[str],
 
     lines += [
         "[ui]",
-        "# `cpu_fans` and `gpu` move together by default; `u` in the TUI splits",
+        "# `cpu_fans` and `gpu` move together by default; `u` in the panel splits",
         "# them so each can run its own mode. Any other zone is always "
         "independent.",
         f"link_cpu_gpu = {str(linked).lower()}",

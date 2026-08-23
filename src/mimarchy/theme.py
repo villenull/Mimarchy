@@ -385,7 +385,7 @@ def load_palette(theme_dir: Path | None = None) -> Palette:
 # the only real failure is a colour so dim the strip looks off.
 # --------------------------------------------------------------------------
 
-#: Theme keys offered as LED colours, in the order the TUI cycles them.
+#: Theme keys offered as LED colours, in the order the panel cycles them.
 #:
 #: Vivid roles only. `muted`, the background tiers and the foreground tiers are
 #: deliberately absent — they are chosen by theme authors to sit *quietly*

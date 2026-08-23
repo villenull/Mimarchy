@@ -64,7 +64,7 @@ device = "Sapphire"
 zone = 0
 
 [ui]
-# CPU and GPU lighting move together by default; `u` in the TUI splits them so
+# CPU and GPU lighting move together by default; `u` in the panel splits them so
 # each can run its own mode. Persisted so the choice survives a restart.
 link_cpu_gpu = true
 
@@ -137,8 +137,8 @@ def _zones(raw: dict) -> dict[str, RGBZoneConfig]:
     """Every well-formed zone table, with the rest skipped and reported.
 
     A zone table missing `device` or `zone` used to raise, and this config is
-    documented as hand-editable — so one typo took down the daemon, the TUI, the
-    bar widget's every poll and the CLI, all at once, and none of them said why.
+    documented as hand-editable — so one typo took down the daemon, the bar
+    widget's every poll and the CLI, all at once, and none of them said why.
     One bad zone now costs that zone and nothing else.
 
     Loud on stderr rather than silent: a zone that quietly stops existing looks

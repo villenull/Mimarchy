@@ -24,9 +24,9 @@ import zlib
 #: Effects that use the chosen colour rather than sweeping hue themselves.
 COLOUR_EFFECTS = frozenset({"static", "breathing", "chase"})
 
-#: Keep in sync with the TUI legend. Order is load-bearing: the TUI numbers these
-#: 1..6 in sequence and `off` is bound to `0`, so inserting one in the middle
-#: renumbers every key after it.
+#: Keep in sync with the panel's legend. Order is load-bearing: the panel numbers
+#: these 1..6 in sequence and `off` is bound to `0`, so inserting one in the
+#: middle renumbers every key after it.
 EFFECTS = ("static", "rainbow", "spectrum", "chase", "breathing", "unhinged",
            "off")
 
@@ -41,8 +41,8 @@ EFFECTS = ("static", "rainbow", "spectrum", "chase", "breathing", "unhinged",
 #: wheel, so it goes to firmware either way. See `lightd.plan`.
 SPATIAL_EFFECTS = frozenset({"rainbow", "chase"})
 
-#: The speed *labels* — what the TUI shows and what lightstate stores. Five even
-#: stops, which is what makes the ladder easy to read.
+#: The speed *labels* — what the panel shows and what lightstate stores. Five
+#: even stops, which is what makes the ladder easy to read.
 SPEED_LEVELS = (0.2, 0.4, 0.6, 0.8, 1.0)
 
 #: What each label actually multiplies the animation rate by.
@@ -82,10 +82,10 @@ def nearest_speed(speed: float) -> float:
     """Snap a stored speed onto the ladder.
 
     State written under the old six-stop ladder holds values above the current
-    maximum, and an unsnapped one lights no stop at all. Public because both the
-    TUI and `mimarchy-ctl` step the ladder and must agree on where a given
-    stored value sits — two different roundings would make the bar and the TUI
-    disagree about the current speed.
+    maximum, and an unsnapped one lights no stop at all. Public because
+    `mimarchy-ctl` steps the ladder from here on every speed command, so a
+    speed the bar reports and a speed it later stores can never disagree about
+    which stop they mean.
     """
     return min(SPEED_LEVELS, key=lambda s: abs(s - speed))
 

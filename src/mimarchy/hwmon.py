@@ -51,13 +51,13 @@ def _read_sensors_json() -> dict:
     here: temperatures are a nice-to-have next to the lighting, and a machine
     without the package installed is a supported configuration rather than a
     broken one. Every caller already treats a missing reading as `None`, so an
-    empty dict flows through to "—" in the TUI and `null` in `mimarchy-ctl
+    empty dict flows through to "—" in the panel and `null` in `mimarchy-ctl
     status --json` with nothing further to do.
 
-    Raising instead is not a theoretical difference. This is read on every TUI
-    repaint and on every poll from the bar widget, so an uncaught
-    FileNotFoundError is a crash loop on exactly the machines least able to
-    diagnose it — and the widget runs inside the user's shell process.
+    Raising instead is not a theoretical difference. This is read on every
+    poll from the bar widget, so an uncaught FileNotFoundError is a crash loop
+    on exactly the machines least able to diagnose it — and the widget runs
+    inside the user's shell process.
 
     All three failure modes are real: no `sensors` binary at all
     (FileNotFoundError), a non-zero exit from a partial or misconfigured

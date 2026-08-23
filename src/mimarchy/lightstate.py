@@ -1,9 +1,10 @@
-"""Desired lighting state, shared between the TUI and the lighting daemon.
+"""Desired lighting state, shared between `mimarchy-ctl` and the lighting daemon.
 
-A small JSON file the TUI writes and the daemon polls. Deliberately not a
-socket: the daemon has to survive the TUI closing (that's the whole point of it
-existing), the state is a handful of fields, and a file means state also
-persists across reboots with no extra work.
+A small JSON file `mimarchy-ctl` writes and the daemon polls. Deliberately not
+a socket: the daemon has to survive the writer exiting (that's the whole point
+of it existing — `mimarchy-ctl` is a one-shot process, called anew by the bar
+panel for every click and keypress), the state is a handful of fields, and a
+file means state also persists across reboots with no extra work.
 
 Writes are atomic — the daemon polls a few times a second and would otherwise
 occasionally read a half-written file.

@@ -5,7 +5,7 @@
   "version": "0.3.0",
   "author": "Diego Huyke",
   "license": "MIT",
-  "description": "ARGB lighting for CPU cooler fans and GPU, live sensors, and the cooler's built-in display — as a bar widget, with a TUI behind it.",
+  "description": "ARGB lighting for CPU cooler fans and GPU, live sensors, and the cooler's built-in display — one icon and one panel.",
   "kinds": [
     "bar-widget"
   ],

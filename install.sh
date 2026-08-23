@@ -108,7 +108,8 @@ systemctl --user daemon-reload
 systemctl --user enable --now openrgb.service
 systemctl --user enable --now mimarchy-light.service
 # The display stream is left disabled: it lights the cooler's panel, which not
-# everyone wants on, and the TUI's `d` key starts it on demand.
+# everyone wants on, and the bar panel's `d` key (or a click on the row) starts
+# it on demand.
 systemctl --user enable mimarchy-display.service
 echo "    openrgb + mimarchy-light started; mimarchy-display enabled but not started"
 
@@ -133,11 +134,10 @@ EOF
 
 say "5/6  Launcher and desktop integration"
 mkdir -p "$HOME/.local/bin"
-ln -sf "$REPO/bin/omarchy-launch-mimarchy" "$HOME/.local/bin/omarchy-launch-mimarchy"
 # mimarchy-ctl is not optional here: the bar widget shells out to it by bare
 # name for every poll and every click, so leaving it inside the venv means a
 # widget stuck on "backend not installed" no matter how well the rest installed.
-for entry in mimarchy-tui mimarchy-ctl mimarchy-setup; do
+for entry in mimarchy-ctl mimarchy-setup; do
   ln -sf "$BIN/$entry" "$HOME/.local/bin/$entry"
 done
 echo "    symlinked into ~/.local/bin"
@@ -218,16 +218,8 @@ EOF
 
      Worth having even with the widget: it puts Mimarchy in the menu's search,
      which is how a lot of people open things.
-
-  d) Hyprland — to float the TUI, append this line to ~/.config/hypr/hyprland.lua:
-
-       o.window("org.omarchy.mimarchy-tui", { tag = "+floating-window" })
-
-     (also in $REPO/omarchy/mimarchy.lua, with the reasoning)
-
-     Then reload: \`hyprctl reload\`
 EOF
-  NEXT_STEP=e
+  NEXT_STEP=d
 elif [[ "$OMARCHY" == 3 ]]; then
   cat <<EOF
 
@@ -236,17 +228,16 @@ elif [[ "$OMARCHY" == 3 ]]; then
        $REPO/legacy/waybar/mimarchy-module.jsonc  -> config.jsonc, and add
                                                      "custom/mimarchy" to modules-right
        $REPO/legacy/waybar/mimarchy-style.css     -> style.css
-
-  c) Hyprland — to float the TUI like bluetui, add to ~/.config/hypr/hyprland.conf:
-
-       windowrule = tag +floating-window, match:class org.omarchy.mimarchy-tui
 EOF
-  NEXT_STEP=d
+  NEXT_STEP=c
 else
   cat <<EOF
 
   b) No Omarchy install detected, so there is nothing to add a launcher to.
-     The TUI runs anywhere and falls back to your terminal's own colours.
+     mimarchy-ctl (installed above, in ~/.local/bin) is the only interface on
+     a non-Omarchy machine — there is no TUI and no bar panel to fall back to.
+     It is a real CLI in its own right: status/effect/colour/speed/display/link,
+     scriptable and bindable to whatever keys or menu you use instead.
 EOF
   NEXT_STEP=c
 fi
@@ -258,5 +249,5 @@ cat <<EOF
   ${NEXT_STEP}) Fan RPM readout (optional) needs the out-of-tree nct6687d driver; see
      the README. Temperatures and lighting work without it.
 
-Done. Launch with: mimarchy-tui
+Done. Open it from the bar: click the Mimarchy icon.
 EOF

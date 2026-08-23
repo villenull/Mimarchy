@@ -15,14 +15,15 @@ import qs.Ui
 // State arrives by two routes, for two different reasons:
 //
 //   * The lighting state file is *watched*. Effect, speed and link changes made
-//     in the TUI show up here within a frame, with no polling and no process.
+//     by any other `mimarchy-ctl` invocation — a Hyprland keybinding, a shell
+//     script — show up here within a frame, with no polling and no process.
 //   * Everything else — sensors, and whether the two units are running — needs
 //     `mimarchy-ctl status --json`, so it is polled: quickly while the panel is
 //     open, slowly while it is closed, since a shut panel only needs the icon
 //     to notice the daemon stopping.
 //
-// The TUI stays the full control surface. This is the glanceable 90% plus the
-// two adjustments worth having without opening a window.
+// This panel is the full control surface — every control the old TUI had now
+// lives here, one block per zone.
 Panel {
   id: root
   moduleName: "io.github.villenull.mimarchy"
@@ -70,12 +71,12 @@ Panel {
 
   // `effects.EFFECTS`, in its order — which is load-bearing twice over here.
   // It is the order the cells are drawn in, and it is what the 1-6/0 shortcuts
-  // number, exactly as the TUI numbered them.
+  // number, exactly as the old TUI numbered them.
   readonly property var effects: ["static", "rainbow", "spectrum", "chase",
                                   "breathing", "unhinged", "off"]
 
-  // `tui.PALETTE`, as hex literals rather than as an import, because the file
-  // that holds them is deleted with the TUI and these are the values a user's
+  // The old TUI's `PALETTE`, as hex literals rather than as an import, because
+  // that file was deleted along with the TUI and these are the values a user's
   // muscle memory is attached to. `arg` is what `mimarchy-ctl colour` is handed:
   // a role name for the theme chip, a hex string for the fixed swatches.
   //
@@ -225,8 +226,9 @@ Panel {
   readonly property string statePath: (runtimeDir !== "" ? runtimeDir : configHome)
     + "/mimarchy-lighting.json"
 
-  // Watched rather than polled. A keypress in the TUI writes this file
-  // atomically, so the bar follows the TUI without either knowing about the
+  // Watched rather than polled. Any `mimarchy-ctl` invocation — this panel's
+  // own, or an independent one from a keybinding or script — writes this file
+  // atomically, so the bar follows along without either side knowing about the
   // other. The contents are not parsed here — the file changing is only used as
   // a signal to re-run status, which is the one place the shape is understood.
   FileView {
@@ -533,7 +535,7 @@ Panel {
       onActivateRequested: if (root.cursorActive) root.activateCursor()
       onTextKey: function (t) {
         var key = String(t || "").toLowerCase()
-        // The same letters the TUI uses, so muscle memory carries over.
+        // The same letters the old TUI used, so muscle memory carries over.
         //
         // These four stay global — every zone, cursor or no cursor. They are
         // the coarse controls the bar icon itself already speaks through its

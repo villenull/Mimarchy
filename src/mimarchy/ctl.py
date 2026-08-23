@@ -1,17 +1,19 @@
-"""`mimarchy-ctl` — the non-interactive half of the TUI.
+"""`mimarchy-ctl` — reads and changes lighting state for the bar panel.
 
 Exists because the Omarchy 4 bar widget needs to read and change lighting state,
 and QML is the wrong place to do either. Quickshell plugins run unsandboxed
 inside the user's long-lived shell process, so anything with logic in it is
 better off in a subprocess that can be tested and that cannot take the desktop
 down with it. The widget therefore shells out to this for everything: one
-`status --json` to paint itself, one command per interaction.
+`status --json` to paint itself, one command per interaction — a click and a
+keyboard shortcut both end up here.
 
-It writes through `lightstate`, which is the same atomic write-then-rename the
-TUI uses, so a bar click and a keypress cannot interleave into a half-written
-file. Nothing here talks to hardware — `mimarchy-lightd` still owns that, and
-still renders both controllers from one clock. This only ever moves the desired
-state that the daemon reads.
+It writes through `lightstate`, using the same atomic write-then-rename
+`lightstate` has always used, so two invocations landing together — a click
+and a keypress, say — cannot interleave into a half-written file. Nothing here
+talks to hardware — `mimarchy-lightd` still owns that, and still renders both
+controllers from one clock. This only ever moves the desired state that the
+daemon reads.
 
 Useful on its own terms as well, which is why it is a real command rather than a
 private helper: Hyprland keybindings, shell scripts, and the Omarchy menu can
@@ -48,8 +50,8 @@ def _targets(state: lightstate.LightingState) -> list[str]:
 
     Linked is not "both targets happen to match" — it means the pair is driven
     as one, so a command edits every target rather than a chosen one. Unlinked,
-    the same command still edits every target, because the bar has no notion of
-    a selected row; picking one is the TUI's job.
+    the same command still edits every target, because `mimarchy-ctl` has no
+    notion of a selected row; picking one is the panel's job.
     """
     keys = list(state.targets)
     if keys:
@@ -314,9 +316,9 @@ def cmd_link(args: argparse.Namespace) -> int:
     state.linked = {"on": True, "off": False, "toggle": not state.linked}[args.action]
     lightstate.save(state)
 
-    # The link flag is also persisted in config.toml, which is what the TUI
-    # reads at startup. Writing only the state file would leave the two
-    # disagreeing until the next time the TUI wrote one.
+    # The link flag is also persisted in config.toml, which is what
+    # `mimarchy-setup` carries forward on a re-run. Writing only the state file
+    # would leave the two disagreeing until the wizard was run again.
     try:
         load_config().save_link_state(state.linked)
     except (OSError, ValueError, KeyError):
@@ -330,7 +332,7 @@ def cmd_link(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mimarchy-ctl",
-        description="Drive Mimarchy's lighting and cooler display without the TUI.",
+        description="Drive Mimarchy's lighting and cooler display from the command line.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

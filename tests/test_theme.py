@@ -351,20 +351,3 @@ def test_css_variables_are_dashed():
     names = theme.Palette.fallback().css_variables()
     assert "mim-select-bg" in names
     assert "mim_select_bg" not in names
-
-
-def test_fallback_palette_is_renderable_by_both_engines():
-    """Every fallback value must parse in Textual *and* in Rich.
-
-    This is the palette a machine with no Omarchy theme gets, so a value only
-    one engine understands is a crash on exactly the install that has no theme
-    to fall back to — which is how `bright_black` (fine in Rich, rejected by
-    Textual) shipped as a startup error. Both parsers are asserted here rather
-    than trusting that a plausible-looking colour name is portable.
-    """
-    from rich.style import Style
-    from textual.color import Color
-
-    for role, value in vars(theme.Palette.fallback()).items():
-        Color.parse(value)              # Textual CSS
-        Style.parse(value)              # Rich markup

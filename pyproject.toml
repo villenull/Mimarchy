@@ -14,15 +14,13 @@ requires-python = ">=3.11"
 # Lower bounds are the versions this is known to run on, capped below the next
 # major so a breaking release cannot silently arrive in a fresh install.
 #
-# All three are load-bearing, verified against actual imports rather than assumed:
+# Both are load-bearing, verified against actual imports rather than assumed:
 #   openrgb-python  rgb.py talks to the OpenRGB SDK server; it is the only path
 #                   to the GPU, which is reached over I2C on the card
 #   hid             display.py writes 64-byte frames to the cooler's hidraw node
-#   textual         the TUI
 dependencies = [
     "openrgb-python>=0.3.6,<0.4",
     "hid>=1.0.9,<2",
-    "textual>=8.2.8,<9",
 ]
 
 [project.optional-dependencies]
@@ -35,7 +33,6 @@ dev = [
 Homepage = "https://github.com/villenull/mimarchy"
 
 [project.scripts]
-mimarchy-tui = "mimarchy.tui:main"
 mimarchy-ctl = "mimarchy.ctl:main"
 mimarchy-setup = "mimarchy.setup:main"
 mimarchy-displayd = "mimarchy.displayd:main"
