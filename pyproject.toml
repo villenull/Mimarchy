@@ -4,7 +4,7 @@ name = "mimarchy"
 # The bar widget shells out to this package's `mimarchy-ctl`, so the two ship as
 # one thing — a plugin newer than the backend it calls is the support case
 # nobody can debug from a screenshot.
-version = "0.3.0"
+version = "0.4.0"
 description = "Omarchy-native LED control for CPU cooler fans, GPU, and the cooler's display"
 readme = "README.md"
 license = { file = "LICENSE" }
