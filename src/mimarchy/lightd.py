@@ -54,22 +54,27 @@ def _seed(zone_key: str) -> int:
     return zlib.crc32(zone_key.encode())
 
 
-def _linked_pair(state: lightstate.LightingState, key: str) -> bool:
-    """Whether this zone is one of the two the link actually joins.
+def _linked_pair(state: lightstate.LightingState, key: str,
+                  zones: dict[str, int]) -> bool:
+    """Whether this zone is joined by the link on this daemon run.
 
-    `state.linked` is a single flag for the whole file, but linking is *defined*
-    as cpu_fans + gpu — a third zone is never part of it. Reading the flag
-    directly made every other zone inherit the pair's constraints: a third
-    one-LED device running chase stayed rendered, showing a flat colour where
-    its firmware could have run a travelling head, for as long as the CPU and
-    GPU happened to be linked. Which is the default.
+    Linking is *every* configured zone, not a hardcoded pair — `zones` is
+    whatever this rig actually has, so a board-plus-strip machine with no
+    `gpu` at all links the zones it does have instead of linking nothing. The
+    consequence is the intended one: a colour-carrying effect on every
+    one-LED zone in the link stays rendered, matching the rest, for as long
+    as the zones are linked. Which is the default. That is the cost of
+    "make these match" — the user asked for it, and it now applies to
+    whatever devices they actually own.
     """
-    return state.linked and key in ("cpu_fans", "gpu")
+    return state.linked and key in zones
 
 
-def _source_target(state: lightstate.LightingState, key: str):
+def _source_target(state: lightstate.LightingState, key: str,
+                    zones: dict[str, int]):
     """The state entry a zone follows — the shared one while linked."""
-    return state.for_target("cpu_fans" if _linked_pair(state, key) else key)
+    source = next(iter(zones)) if _linked_pair(state, key, zones) else key
+    return state.for_target(source)
 
 
 def rotation(zones: dict[str, int], state: lightstate.LightingState,
@@ -84,7 +89,7 @@ def rotation(zones: dict[str, int], state: lightstate.LightingState,
     return tuple(
         (key, unhinged_firmware_phase(t, _seed(key)))
         for key, count in sorted(zones.items())
-        if count == 1 and _source_target(state, key).effect == "unhinged"
+        if count == 1 and _source_target(state, key, zones).effect == "unhinged"
     )
 
 
@@ -128,7 +133,7 @@ def plan(rgb: RGBController, zones: dict[str, int],
     rendered: dict[str, tuple[lightstate.TargetState, int]] = {}
     firmware: dict[str, tuple[str, int | None, tuple[int, int, int]]] = {}
     for key, count in zones.items():
-        target = _source_target(state, key)
+        target = _source_target(state, key, zones)
 
         # Unhinged on a one-LED zone rotates: mostly rendered colour churn, with
         # occasional spells of the card's own Rainbow Wave and Runway so the bar
@@ -147,7 +152,7 @@ def plan(rgb: RGBController, zones: dict[str, int],
                 rendered[key] = (target, count)
             continue
 
-        colour_blocks_firmware = (_linked_pair(state, key)
+        colour_blocks_firmware = (_linked_pair(state, key, zones)
                                   and target.effect in COLOUR_EFFECTS)
         if (count == 1 and target.effect in SPATIAL_EFFECTS
                 and not colour_blocks_firmware

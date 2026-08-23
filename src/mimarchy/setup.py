@@ -47,10 +47,12 @@ from mimarchy.config import CONFIG_PATH, Config, load_config
 from mimarchy.rgb import RGBError, connect
 
 #: Names that make the CPU/GPU link work without the user knowing it exists.
-#: Linking is defined as the pair `cpu_fans` + `gpu` (see `lightd._source_target`)
-#: — every other key is driven independently — so suggesting those two names for
-#: the devices they describe is the difference between `u` in the TUI doing
-#: something and doing nothing at all.
+#: Linking joins every configured zone (see `lightd._source_target`), so it works
+#: regardless of naming — but the shared state is keyed off the first zone in
+#: config order, and `cpu_fans` is the name that puts the motherboard header
+#: there. Suggesting these two names for the devices they describe is the
+#: difference between `u` in the TUI doing something recognisable and doing
+#: something arbitrary.
 SUGGESTED_KEYS = {
     "motherboard": "cpu_fans",
     "gpu": "gpu",

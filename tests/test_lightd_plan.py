@@ -152,7 +152,8 @@ def test_multi_led_zones_are_never_handed_over() -> None:
 
 
 def test_linked_zones_read_one_shared_entry() -> None:
-    """Both devices must come from the same state, or "linked" means nothing."""
+    """Both devices must come from the first configured zone's state, or
+    "linked" means nothing."""
     st = lightstate.LightingState(linked=True)
     st.for_target("cpu_fans").effect = "breathing"
     st.for_target("gpu").effect = "spectrum"      # stale, must be ignored
@@ -161,15 +162,30 @@ def test_linked_zones_read_one_shared_entry() -> None:
         "cpu_fans": "breathing", "gpu": "breathing"}
 
 
-def test_a_third_zone_is_planned_independently_of_the_linked_pair() -> None:
-    """`cpu_fans` and `gpu` are two config keys, not the design.
+def test_a_third_zone_is_pulled_into_the_shared_state_when_linked() -> None:
+    """Linking is *every* configured zone, not the two named `cpu_fans` and
+    `gpu` — those are just the names `mimarchy-setup` happens to suggest.
 
-    Linking is *defined* as that pair, so a third zone must keep its own effect
-    while they share one — otherwise "add another strip" would silently mean
-    "make everything match", and the extra `[rgb.zones.*]` block the README
-    advertises would be a lie.
+    So a third zone joins the link exactly like the first two: while linked,
+    `case` reads the same shared entry they do, rather than keeping whatever
+    effect its own state happened to hold. Otherwise a rig with a third zone
+    (or none of the suggested names at all) would find the toggle does
+    nothing for it, which is the bug this definition replaces.
     """
     st = _state("breathing", linked=True)
+    st.for_target("case").effect = "spectrum"
+
+    rendered, firmware = plan(FakeRGB(), {**ZONES, "case": 30}, st)
+
+    assert firmware == {}
+    assert {k: v[0].effect for k, v in rendered.items()} == {
+        "cpu_fans": "breathing", "gpu": "breathing", "case": "breathing"}
+
+
+def test_a_third_zone_keeps_its_own_effect_when_unlinked() -> None:
+    """Unlinked, each zone is still driven by its own state entry — the case
+    fan does not have to agree with the pair just because they share config."""
+    st = _state("breathing", linked=False)
     st.for_target("case").effect = "spectrum"
 
     rendered, firmware = plan(FakeRGB(), {**ZONES, "case": 30}, st)
@@ -179,25 +195,27 @@ def test_a_third_zone_is_planned_independently_of_the_linked_pair() -> None:
         "cpu_fans": "breathing", "gpu": "breathing", "case": "spectrum"}
 
 
-def test_a_third_one_led_zone_reaches_firmware_on_its_own_terms() -> None:
-    """The link's colour objection is about the linked pair. A zone outside it
-    has no shared colour to mismatch, so it routes on its own effect.
+def test_a_third_one_led_zone_is_blocked_from_firmware_while_linked() -> None:
+    """The link's colour objection now covers every one-LED zone it joins, not
+    just the two named `cpu_fans` and `gpu`.
 
-    It used not to: `colour_blocks_firmware` read `state.linked`, which is one
-    flag for the whole file, so while CPU and GPU were linked — the default — a
-    third one-LED device running chase was rendered instead of handed over, and
-    showed a flat colour where the hardware could show a travelling head.
-    `_linked_pair` is what both that line and `_source_target` now ask.
+    It used to read `key in ("cpu_fans", "gpu")`, so a third one-LED device
+    stayed outside `_linked_pair` no matter what, and a colour-carrying effect
+    on it went to firmware even while linked — the same mismatch the link
+    exists to prevent, just missed for any zone outside the hardcoded pair.
+    `_linked_pair` now takes `zones`, so membership is "in this daemon run's
+    zones" rather than in a literal pair, and `case` — sharing chase, the
+    linked effect, like `cpu_fans` and `gpu` do — is blocked from firmware and
+    stays rendered right alongside them.
     """
-    st = _state("static", linked=True)
-    st.for_target("case").effect = "chase"
+    st = _state("chase", linked=True)
 
     rgb = FakeRGB()
     rgb.available_modes = lambda key: ("rainbow", "chase")
-    _rendered, firmware = plan(rgb, {**ZONES, "case": 1}, st)
+    rendered, firmware = plan(rgb, {**ZONES, "case": 1}, st)
 
-    assert firmware["case"][0] == "chase"
-    assert "gpu" not in firmware
+    assert firmware == {}
+    assert set(rendered) == {"cpu_fans", "gpu", "case"}
 
 
 def test_zone_seeds_are_stable_and_distinct() -> None:
