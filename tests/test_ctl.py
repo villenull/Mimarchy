@@ -190,6 +190,65 @@ class TestSpeed:
         ctl.main(["speed", "down"])
         assert lightstate.load().for_target("cpu_fans").speed == SPEED_LEVELS[1]
 
+    def test_no_zone_still_moves_every_target(self):
+        """Regression guard: omitting --zone must keep today's meaning."""
+        seed(cpu_fans=("rainbow", SPEED_LEVELS[0]), gpu=("chase", SPEED_LEVELS[0]))
+        assert ctl.main(["speed", "+"]) == 0
+
+        state = lightstate.load()
+        assert state.for_target("cpu_fans").speed == SPEED_LEVELS[1]
+        assert state.for_target("gpu").speed == SPEED_LEVELS[1]
+
+    def test_zone_scopes_to_one_target(self):
+        seed(cpu_fans=("rainbow", SPEED_LEVELS[0]), gpu=("chase", SPEED_LEVELS[0]))
+        assert ctl.main(["speed", "+", "--zone", "cpu_fans"]) == 0
+
+        state = lightstate.load()
+        assert state.for_target("cpu_fans").speed == SPEED_LEVELS[1]
+        assert state.for_target("gpu").speed == SPEED_LEVELS[0]
+
+    def test_unknown_zone_is_rejected_without_writing(self, capsys):
+        seed(cpu_fans=("rainbow", SPEED_LEVELS[0]), gpu=("chase", SPEED_LEVELS[0]))
+
+        assert ctl.main(["speed", "+", "--zone", "nope"]) != 0
+
+        state = lightstate.load()
+        assert state.for_target("cpu_fans").speed == SPEED_LEVELS[0]
+        assert state.for_target("gpu").speed == SPEED_LEVELS[0]
+        assert "unknown zone" in capsys.readouterr().err
+
+    def test_set_moves_to_an_absolute_stop(self):
+        seed(cpu_fans=("rainbow", SPEED_LEVELS[0]), gpu=("chase", SPEED_LEVELS[0]))
+        assert ctl.main(["speed", "set", "4"]) == 0
+
+        state = lightstate.load()
+        assert state.for_target("cpu_fans").speed == SPEED_LEVELS[3]
+        assert state.for_target("gpu").speed == SPEED_LEVELS[3]
+
+    def test_set_with_a_zone_touches_only_that_target(self):
+        seed(cpu_fans=("rainbow", SPEED_LEVELS[0]), gpu=("chase", SPEED_LEVELS[0]))
+        assert ctl.main(["speed", "set", "4", "--zone", "cpu_fans"]) == 0
+
+        state = lightstate.load()
+        assert state.for_target("cpu_fans").speed == SPEED_LEVELS[3]
+        assert state.for_target("gpu").speed == SPEED_LEVELS[0]
+
+    def test_set_on_a_static_zone_is_not_an_error(self, capsys):
+        """Mirrors the relative form: a static/off zone has no speed to set."""
+        seed(cpu_fans=("static", 1.0))
+
+        assert ctl.main(["speed", "set", "5", "--zone", "cpu_fans"]) == 0
+        assert lightstate.load().for_target("cpu_fans").speed == 1.0
+        assert "no speed change" in capsys.readouterr().err
+
+    def test_set_on_a_static_zone_without_a_zone_option_is_also_not_an_error(
+            self, capsys):
+        seed(cpu_fans=("static", 1.0))
+
+        assert ctl.main(["speed", "set", "5"]) == 0
+        assert lightstate.load().for_target("cpu_fans").speed == 1.0
+        assert "no speed change" in capsys.readouterr().err
+
 
 class TestEffect:
     def test_sets_every_target(self):
@@ -206,6 +265,60 @@ class TestEffect:
 
         assert lightstate.load().for_target("cpu_fans").effect == "static"
         assert "unknown effect" in capsys.readouterr().err
+
+    def test_no_zone_still_sets_every_target(self):
+        """Regression guard: omitting --zone must keep today's meaning."""
+        seed(cpu_fans=("static", 1.0), gpu=("static", 1.0))
+        assert ctl.main(["effect", "spectrum"]) == 0
+
+        state = lightstate.load()
+        assert state.for_target("cpu_fans").effect == "spectrum"
+        assert state.for_target("gpu").effect == "spectrum"
+
+    def test_zone_scopes_to_one_target(self):
+        seed(cpu_fans=("static", 1.0), gpu=("static", 1.0))
+        assert ctl.main(["effect", "spectrum", "--zone", "cpu_fans"]) == 0
+
+        state = lightstate.load()
+        assert state.for_target("cpu_fans").effect == "spectrum"
+        assert state.for_target("gpu").effect == "static"
+
+    def test_unknown_zone_is_rejected_without_writing(self, capsys):
+        seed(cpu_fans=("static", 1.0), gpu=("static", 1.0))
+        assert ctl.main(["effect", "spectrum", "--zone", "nope"]) != 0
+
+        state = lightstate.load()
+        assert state.for_target("cpu_fans").effect == "static"
+        assert state.for_target("gpu").effect == "static"
+        assert "unknown zone" in capsys.readouterr().err
+
+
+class TestColour:
+    def test_no_zone_still_sets_every_target(self):
+        """Regression guard: omitting --zone must keep today's meaning."""
+        seed(cpu_fans=("static", 1.0), gpu=("static", 1.0))
+        assert ctl.main(["colour", "#ff0044"]) == 0
+
+        state = lightstate.load()
+        assert state.for_target("cpu_fans").colour == (255, 0, 0x44)
+        assert state.for_target("gpu").colour == (255, 0, 0x44)
+
+    def test_zone_scopes_to_one_target(self):
+        seed(cpu_fans=("static", 1.0), gpu=("static", 1.0))
+        assert ctl.main(["colour", "#ff0044", "--zone", "cpu_fans"]) == 0
+
+        state = lightstate.load()
+        assert state.for_target("cpu_fans").colour == (255, 0, 0x44)
+        assert state.for_target("gpu").colour == (255, 255, 255)
+
+    def test_unknown_zone_is_rejected_without_writing(self, capsys):
+        seed(cpu_fans=("static", 1.0), gpu=("static", 1.0))
+        assert ctl.main(["colour", "#ff0044", "--zone", "nope"]) != 0
+
+        state = lightstate.load()
+        assert state.for_target("cpu_fans").colour == (255, 255, 255)
+        assert state.for_target("gpu").colour == (255, 255, 255)
+        assert "unknown zone" in capsys.readouterr().err
 
 
 class TestDisplay:

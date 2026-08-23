@@ -67,6 +67,28 @@ def _targets(state: lightstate.LightingState) -> list[str]:
         return ["cpu_fans", "gpu"]
 
 
+def _selected_targets(state: lightstate.LightingState,
+                      zone: str | None) -> list[str] | None:
+    """The target keys a `--zone`-aware command should act on.
+
+    No `--zone` means every target, which is the meaning the bar icon's wheel
+    and middle-click already rely on, and it must stay that way: this is just
+    `_targets(state)` unchanged. A given `--zone` narrows to that one key, but
+    only after checking it is a real target. `LightingState.for_target` is a
+    bare `setdefault` with no validation, so handing a typo straight to it
+    would silently create and persist a phantom zone that nothing renders;
+    returning None here lets the caller report the error instead.
+    """
+    targets = _targets(state)
+    if zone is None:
+        return targets
+    if zone not in targets:
+        print(f"unknown zone: {zone}", file=sys.stderr)
+        print(f"try one of: {', '.join(targets)}", file=sys.stderr)
+        return None
+    return [zone]
+
+
 def _speed_label(speed: float) -> int:
     """The speed as a 1-based stop number, which is what a person reads.
 
@@ -141,19 +163,33 @@ def _human_status(payload: dict) -> str:
 
 
 def cmd_speed(args: argparse.Namespace) -> int:
-    step = 1 if args.direction in ("+", "up") else -1
     state = lightstate.load()
+    targets = _selected_targets(state, args.zone)
+    if targets is None:
+        return 2
+
+    if args.direction == "set":
+        if args.value is None or not 1 <= args.value <= len(SPEED_LEVELS):
+            print(f"speed stop must be between 1 and {len(SPEED_LEVELS)}",
+                  file=sys.stderr)
+            return 2
+    else:
+        step = 1 if args.direction in ("+", "up") else -1
 
     moved = False
-    for key in _targets(state):
+    for key in targets:
         target = state.for_target(key)
         if target.effect in STATIC_EFFECTS:
             continue
-        index = SPEED_LEVELS.index(nearest_speed(target.speed))
-        stop = max(0, min(len(SPEED_LEVELS) - 1, index + step))
-        if SPEED_LEVELS[stop] != target.speed:
+        if args.direction == "set":
+            new_speed = SPEED_LEVELS[args.value - 1]
+        else:
+            index = SPEED_LEVELS.index(nearest_speed(target.speed))
+            stop = max(0, min(len(SPEED_LEVELS) - 1, index + step))
+            new_speed = SPEED_LEVELS[stop]
+        if new_speed != target.speed:
             moved = True
-        target.speed = SPEED_LEVELS[stop]
+        target.speed = new_speed
 
     if not moved:
         # Not an error. The wheel turned at the end of the ladder, or on an
@@ -173,7 +209,11 @@ def cmd_effect(args: argparse.Namespace) -> int:
         return 2
 
     state = lightstate.load()
-    for key in _targets(state):
+    targets = _selected_targets(state, args.zone)
+    if targets is None:
+        return 2
+
+    for key in targets:
         state.for_target(key).effect = args.name
     lightstate.save(state)
     return 0
@@ -216,7 +256,11 @@ def cmd_colour(args: argparse.Namespace) -> int:
             return 2
 
     state = lightstate.load()
-    for key in _targets(state):
+    targets = _selected_targets(state, args.zone)
+    if targets is None:
+        return 2
+
+    for key in targets:
         target = state.for_target(key)
         target.colour = rgb
         target.colour_role = role
@@ -295,12 +339,20 @@ def build_parser() -> argparse.ArgumentParser:
                         help="machine-readable output (what the bar widget reads)")
     status.set_defaults(func=cmd_status)
 
-    speed = sub.add_parser("speed", help="step the speed ladder")
-    speed.add_argument("direction", choices=["+", "-", "up", "down"])
+    speed = sub.add_parser("speed", help="step the speed ladder, or set it directly")
+    speed.add_argument("direction", choices=["+", "-", "up", "down", "set"],
+                       help="relative step, or 'set' for an absolute stop")
+    speed.add_argument("value", nargs="?", type=int, metavar="N",
+                       help=f"1-based speed stop 1..{len(SPEED_LEVELS)}, "
+                            f"required with 'set'")
+    speed.add_argument("--zone", metavar="KEY",
+                       help="act on this target only (default: every target)")
     speed.set_defaults(func=cmd_speed)
 
     effect = sub.add_parser("effect", help="set the effect on every target")
     effect.add_argument("name", help=f"one of: {', '.join(EFFECTS)}")
+    effect.add_argument("--zone", metavar="KEY",
+                        help="act on this target only (default: every target)")
     effect.set_defaults(func=cmd_effect)
 
     display = sub.add_parser("display", help="cooler display on/off")
@@ -316,6 +368,8 @@ def build_parser() -> argparse.ArgumentParser:
     colour.add_argument("value", metavar="COLOUR",
                         help=f"a hex value like '#ff0044', or one of: "
                              f"{', '.join(LED_ROLES)}")
+    colour.add_argument("--zone", metavar="KEY",
+                        help="act on this target only (default: every target)")
     colour.set_defaults(func=cmd_colour)
 
     reload_theme = sub.add_parser(
