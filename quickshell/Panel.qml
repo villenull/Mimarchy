@@ -17,13 +17,15 @@ import qs.Ui
 //   * The lighting state file is *watched*. Effect, speed and link changes made
 //     by any other `mimarchy-ctl` invocation — a Hyprland keybinding, a shell
 //     script — show up here within a frame, with no polling and no process.
-//   * Everything else — sensors, and whether the two units are running — needs
-//     `mimarchy-ctl status --json`, so it is polled: quickly while the panel is
-//     open, slowly while it is closed, since a shut panel only needs the icon
-//     to notice the daemon stopping.
+//   * Whether the two systemd units are running needs `mimarchy-ctl status
+//     --json`, so that part is polled: quickly while the panel is open,
+//     slowly while it is closed. A closed icon only needs to notice the
+//     daemon dying outright — a crash never touches the state file, so the
+//     watch above cannot see it, and this poll is the only thing that does.
 //
 // This panel is the full control surface — every control the old TUI had now
-// lives here, one block per zone.
+// lives here, one block per zone. No tooltip: hover shows nothing, on
+// purpose — there is no reading here worth surfacing outside the panel.
 Panel {
   id: root
   moduleName: "io.github.villenull.mimarchy"
@@ -180,40 +182,8 @@ Panel {
 
   // ---- settings ----------------------------------------------------------
 
-  readonly property bool showSensorsInTooltip: setting("showSensorsInTooltip", true)
   readonly property int pollIntervalSec: Math.max(1, setting("pollIntervalSec", 2))
   readonly property int idlePollIntervalSec: Math.max(5, setting("idlePollIntervalSec", 30))
-
-  // ---- formatting --------------------------------------------------------
-
-  function formatTemp(value) {
-    return (value === null || value === undefined) ? "—" : Math.round(value) + "°"
-  }
-
-  function formatRpm(value) {
-    return (value === null || value === undefined) ? "—" : Math.round(value) + " rpm"
-  }
-
-  function speedText(target) {
-    if (!target || !target.takes_speed) return "no speed"
-    return "speed " + target.speed_stop + "/" + speedStops
-  }
-
-  readonly property string tooltip: {
-    if (backendMissing) return "Mimarchy — backend not installed"
-    if (!status) return "Mimarchy"
-
-    var parts = ["Mimarchy — " + effectSummary]
-    if (!lightingActive) parts.push("lighting stopped")
-    if (showSensorsInTooltip && status.sensors) {
-      var s = status.sensors
-      var readings = []
-      if (s.cpu_temp !== null && s.cpu_temp !== undefined) readings.push("cpu " + formatTemp(s.cpu_temp))
-      if (s.gpu_temp !== null && s.gpu_temp !== undefined) readings.push("gpu " + formatTemp(s.gpu_temp))
-      if (readings.length > 0) parts.push(readings.join("  "))
-    }
-    return parts.join("\n")
-  }
 
   // ---- reading state -----------------------------------------------------
 
@@ -487,7 +457,9 @@ Panel {
     // on the bar — and it inherits the optical centring already written for
     // exactly this case. An `iconComponent` is for icons that are not glyphs.
     text: root.glyph
-    tooltipText: root.tooltip
+    // Deliberately not bound: the base class's own hover text short-circuits
+    // on a falsy value, so leaving it out is "nothing on hover" through the
+    // framework's own path, not a workaround.
     dimmed: root.backendMissing || !root.lightsLive
 
     onPressed: function (buttonCode) {

@@ -329,18 +329,23 @@ def test_the_widget_no_longer_launches_a_window(source: str) -> None:
     )
 
 
-def test_sensors_left_the_panel_but_not_the_tooltip(source: str) -> None:
-    """Two different questions with two different answers.
+def test_no_tooltip_and_no_sensors_anywhere_in_the_widget(source: str) -> None:
+    """Nothing on hover, on purpose — a deliberate later decision, not the
+    original design.
 
-    Temperatures leave the panel body — the design's own decision, since
-    nothing in the panel acts on them. The tooltip keeps its line because
-    hover is the only place they are still reachable at all, and deleting
-    both at once is how that gets lost without anyone deciding it.
+    Sensors first left the panel body while the hover tooltip kept a summary
+    line, on the reasoning that hover was the only place left to reach them.
+    That tradeoff was rejected outright: no hover text at all, sensors or
+    otherwise. `tooltipText` is simply never bound, which is the framework's
+    own "nothing to show" path (`WidgetButton.showTooltip` short-circuits on
+    a falsy string) rather than a workaround — so its absence from the
+    source is the whole test.
     """
-    assert "showSensorsInTooltip" in source and "formatTemp" in source, (
-        "the tooltip's sensor line went with the panel's — that was out of "
-        "scope and is the last place temperatures are shown"
-    )
+    for gone in ("tooltipText:", "showSensorsInTooltip", "function formatTemp",
+                "function formatRpm", "readonly property string tooltip"):
+        assert gone not in source, (
+            f"{gone!r} is back — hover is meant to show nothing at all"
+        )
     body = source[source.index("Column {"):]
     assert "cpu_fan_rpm" not in body, (
         "the fan reading is back in the panel body"

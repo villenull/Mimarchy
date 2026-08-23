@@ -237,11 +237,21 @@ desktop, and useful on its own; B is the bulk of the work and the only part that
 needs a running shell; C is deletion, which is only safe once B is real; D is
 what makes it a release rather than a working tree.
 
+## Resolved after release
+
+- **The tooltip.** Settled the opposite way from the initial guess: not "keep
+  a temperature on hover", but no hover text at all — `tooltipText` is simply
+  never bound. `showSensorsInTooltip`, `formatTemp`, `formatRpm` and the
+  `tooltip` property all went with it, along with the manifest setting.
+  `pollIntervalSec`'s status poll survives regardless — it was never only
+  about sensors, and `idlePollIntervalSec` still exists for the reason below.
+- **The idle poll.** Kept. A crashing daemon (as opposed to a graceful stop)
+  never writes the lighting state file, so the `FileView` watch can't see it —
+  the periodic poll while the panel is closed is the only thing that notices
+  `lighting_active` flip to false in that case.
+
 ## Open questions
 
-1. **The tooltip.** Sensors leave the panel — do they leave the tooltip too, or
-   is a temperature on hover still worth having when nothing else shows it?
-2. **The idle poll**, per Phase D — measure before deleting the setting.
-3. **Wheel and right-click on the icon** stay as they are, and the wheel acts on
+1. **Wheel and right-click on the icon** stay as they are, and the wheel acts on
    every zone. That now agrees with what Link means while linked — but should it
    still change everything at once when the zones are independent?
