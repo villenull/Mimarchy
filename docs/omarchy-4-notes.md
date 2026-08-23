@@ -218,9 +218,9 @@ the interesting branch was taken.
 2. **A vertical bar.** `vertical` changes `BarIconButton`'s sizing (`fixedWidth`
    vs `fixedHeight`) and the panel's anchoring, and the sizing bug above is a
    reminder that this is the kind of thing only a running bar answers.
-3. **Wheel and right-click on the bar icon.** The keyboard path is now
-   confirmed, but no pointer-injection tool is installed and `wtype` is
-   keyboard-only, so the scroll and right-click handlers remain unexercised.
+3. ~~Wheel and right-click on the bar icon.~~ Confirmed by hand: right-click
+   toggles the display as intended. The wheel was confirmed working too, then
+   deliberately removed by request — it acts on nothing now.
 4. **The theme hook end to end** — switch themes and watch the LEDs follow.
    Needs the LEDs.
 5. **A user-installed theme's `colors.toml`.** The machine has only the 22 stock

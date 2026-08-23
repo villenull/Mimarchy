@@ -87,8 +87,8 @@ omarchy plugin add https://github.com/villenull/mimarchy --enable
 That gives you the bar widget: a bulb icon that dims when the LEDs are frozen,
 and a panel with effect, colour and speed for every zone, plus toggles for the
 cooler display and the link. Left click opens the panel, right click toggles
-the display, middle click toggles the link, scroll changes speed. There is no
-second window behind it — the panel is the entire interface, effects included.
+the display, middle click toggles the link. There is no second window behind
+it — the panel is the entire interface, effects included.
 
 A keybinding is worth adding too, for opening the panel without touching the
 mouse. Every first-party Omarchy panel answers to the same idiom — `SUPER +
@@ -163,11 +163,13 @@ open it, then move without ever touching the mouse.
 `1`–`6` and `0` are scoped to wherever the cursor is standing: with the cursor
 on the GPU's effect row, pressing `3` sets the GPU to spectrum without
 touching anything linked to it. `u`, `d`, `+` and `-` stay global regardless of
-the cursor — they are the same coarse controls the bar icon already exposes
-through its wheel and its clicks, so the same keystroke should not mean two
-different things depending on a cursor the user may not have summoned yet. The
-first press of a movement key only reveals the cursor rather than moving it,
-so it never jumps in from off-screen.
+the cursor — `u` and `d` mirror the icon's own middle- and right-click, and
+`+`/`-` are the coarse every-zone speed nudge (the icon's scroll wheel does
+nothing; there is no zone for a scroll to pick). Keeping these four global
+means the same keystroke never means two different things depending on a
+cursor the user may not have summoned yet. The first press of a movement key
+only reveals the cursor rather than moving it, so it never jumps in from
+off-screen.
 
 ## mimarchy-ctl
 

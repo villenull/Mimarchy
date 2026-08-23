@@ -83,8 +83,9 @@ Add zone addressing to the three commands that change lighting:
 Notes that decide the shape:
 
 - **Omitting `--zone` keeps today's meaning** — every target. That is what the
-  bar icon's wheel and the middle-click already do, and what anyone's scripts
-  do; changing the default would break both silently.
+  bar icon's middle-click already does (its wheel did too, at the time this
+  was written — since removed, see below), and what anyone's scripts do;
+  changing the default would break both silently.
 - **`speed set N`** is new. The panel clicks a stop directly, and walking there
   with repeated `+` is both slow and wrong at the ends of the ladder.
 - **An unknown zone is an error**, not a no-op. A typo that silently does
@@ -249,9 +250,14 @@ what makes it a release rather than a working tree.
   never writes the lighting state file, so the `FileView` watch can't see it —
   the periodic poll while the panel is closed is the only thing that notices
   `lighting_active` flip to false in that case.
+- **Wheel and right-click on the icon.** Confirmed by hand: right-click stays
+  as it was (cooler display toggle). The wheel's open question — should it
+  nudge every zone, or only the last one touched, once zones are independent —
+  was answered a third way: neither. The wheel does nothing at all now; the
+  panel's per-zone speed stops and the `+`/`-` global nudge cover the whole
+  range a wheel could have, without a scroll needing to guess which zone it
+  meant.
 
 ## Open questions
 
-1. **Wheel and right-click on the icon** stay as they are, and the wheel acts on
-   every zone. That now agrees with what Link means while linked — but should it
-   still change everything at once when the zones are independent?
+None currently open.

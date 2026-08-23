@@ -168,18 +168,31 @@ def test_speed_is_set_absolutely_rather_than_stepped(source: str) -> None:
     """Clicking the fourth stop has to land on four.
 
     `mimarchy-ctl speed +` was the only speed verb the panel had, and it is
-    still the right one for the +/- keys and the icon's wheel. Wiring the
-    stops to it as well would make a click on stop 4 move one notch — a
-    control that visibly disagrees with the click that drove it.
+    still the right one for the `+`/`-` keys — the coarse every-zone path.
+    Wiring the stops to it as well would make a click on stop 4 move one
+    notch — a control that visibly disagrees with the click that drove it.
     """
     assert re.search(r'"speed",\s*"set",\s*String\(index \+ 1\)', source), (
         "the speed stops no longer issue an absolute `speed set N`"
     )
     for relative in ('"speed", "+"', '"speed", "-"'):
         assert relative in source, (
-            f"the global {relative} shortcut is gone; +/- and the icon wheel "
-            f"are the coarse every-zone path and were meant to survive"
+            f"the global {relative} shortcut is gone; +/- is the only "
+            f"every-zone speed nudge left and was meant to survive"
         )
+
+
+def test_the_wheel_does_nothing(source: str) -> None:
+    """A scroll over the icon has no zone to act on.
+
+    The wheel used to nudge every zone's speed, the same coarse path as `+`
+    and `-`. Once the panel does per-zone speed, that global nudge either
+    surprises someone with unlinked zones or needs a notion of "the last zone
+    touched" the icon has no way to show — so it was removed outright rather
+    than picking one.
+    """
+    assert "onWheelMoved" not in source, "the wheel handler is back"
+    assert "wheelAccumulator" not in source, "dead state for a removed handler"
 
 
 def test_colour_and_speed_rows_hide_on_the_backends_word(source: str) -> None:

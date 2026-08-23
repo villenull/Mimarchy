@@ -39,7 +39,6 @@ Panel {
   // rather than drawing a confident row of zeroes.
   property var status: null
   property bool backendMissing: false
-  property real wheelAccumulator: 0
 
   readonly property bool lightingActive: status ? status.lighting_active === true : false
   readonly property bool displayActive: status ? status.display_active === true : false
@@ -61,12 +60,6 @@ Panel {
     var effects = targetKeys.map(function (k) { return status.targets[k].effect })
     var same = effects.every(function (e) { return e === effects[0] })
     return same ? effects[0] : effects.join(" / ")
-  }
-
-  readonly property bool anyTargetTakesSpeed: {
-    for (var i = 0; i < targetKeys.length; i++)
-      if (status.targets[targetKeys[i]].takes_speed) return true
-    return false
   }
 
   // ---- what the panel can set --------------------------------------------
@@ -284,8 +277,8 @@ Panel {
 
       // Dropping a click that arrived mid-flight is worse than delaying it: on
       // a toggle it shows as the switch flipping and snapping back. Only the
-      // most recent is kept — a burst of scroll steps wants to end where the
-      // user stopped, not replay every notch.
+      // most recent is kept — a burst of quick clicks through several speed
+      // stops wants to end where the user stopped, not replay every one.
       if (root.pendingAction) {
         var next = root.pendingAction
         root.pendingAction = null
@@ -468,16 +461,11 @@ Panel {
       else root.toggle()
     }
 
-    // Accumulated rather than acted on per event, because a touchpad sends many
-    // sub-notch deltas per gesture and one step per event would run the ladder
-    // end to end on a single swipe.
-    onWheelMoved: function (delta) {
-      if (!root.anyTargetTakesSpeed) return
-      var wheel = Util.wheelSteps(root.wheelAccumulator, delta)
-      root.wheelAccumulator = wheel.remainder
-      if (wheel.steps === 0) return
-      root.run(["speed", wheel.steps > 0 ? "+" : "-"])
-    }
+    // The wheel deliberately does nothing. A scroll over the icon has no
+    // zone to act on — the panel is where speed lives now, one stop at a
+    // time per zone, and a global nudge from the icon would either hit every
+    // zone at once (surprising once they're unlinked) or need a notion of
+    // "the last zone touched" that the icon has no way to show.
   }
 
   // ---- panel -------------------------------------------------------------
@@ -509,11 +497,12 @@ Panel {
         var key = String(t || "").toLowerCase()
         // The same letters the old TUI used, so muscle memory carries over.
         //
-        // These four stay global — every zone, cursor or no cursor. They are
-        // the coarse controls the bar icon itself already speaks through its
-        // wheel and its middle click, and scoping them to a cursor would make
-        // the same keystroke mean two different things depending on a
-        // highlight the user may not have summoned yet.
+        // These four stay global — every zone, cursor or no cursor. `d` and
+        // `u` mirror the icon's own right-click and middle-click; `+`/`-` are
+        // the only speed nudge left now that the wheel does nothing. Scoping
+        // any of them to a cursor would make the same keystroke mean two
+        // different things depending on a highlight the user may not have
+        // summoned yet.
         if (key === "d") root.run(["display", "toggle"])
         else if (key === "u") root.run(["link", "toggle"])
         else if (key === "+" || key === "=") root.run(["speed", "+"])
