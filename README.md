@@ -14,7 +14,11 @@ reverse-engineered for it.
 Runs on **Omarchy 4** and on Omarchy 3.x. Both theme formats are read, so an
 install keeps working across the upgrade.
 
-![Mimarchy demo](docs/demo.gif)
+![Mimarchy panel, linked](docs/panel-linked.png)
+![Mimarchy panel, unlinked](docs/panel-unlinked.png)
+
+Above: every zone linked, one shared set of controls. Below: unlinked, one
+block per zone. Both are the panel itself — there is nothing behind it.
 
 ## What it does
 
