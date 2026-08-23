@@ -32,23 +32,19 @@ BIN="$VENV/bin"
 
 say() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 
-# Which Omarchy this machine is running, because the desktop integration is
-# entirely different on either side of 4.0 and the wrong instructions are worse
-# than none. Detected from where the active theme lives rather than from a
-# version string: 4.0 moved it into the XDG state directory and left no
-# compatibility symlink, so the path *is* the version test.
+# Whether this machine is running Omarchy 4 at all — the only version this
+# supports. Detected from where the active theme lives, which is a real signal
+# rather than a guess: Omarchy 4 moved it into the XDG state directory, and a
+# pre-4 install (or none at all) simply has nothing there.
 STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 
-#
 # Tested with -L as well as -e, because that path is a *symlink* to the active
 # theme and -e follows it: a link left dangling mid-theme-switch would otherwise
 # report a real Omarchy 4 machine as having no Omarchy at all, and silently skip
 # every integration step.
 if [[ -e "$STATE_HOME/omarchy/current/theme" || -L "$STATE_HOME/omarchy/current/theme" ]]; then
   OMARCHY=4
-elif [[ -e "$CONFIG_HOME/omarchy/current/theme" || -L "$CONFIG_HOME/omarchy/current/theme" ]]; then
-  OMARCHY=3
 else
   OMARCHY=none
 fi
@@ -160,7 +156,6 @@ if [[ "$OMARCHY" == 4 ]]; then
 fi
 case "$OMARCHY" in
   4) echo "    detected Omarchy 4" ;;
-  3) echo "    detected Omarchy 3.x" ;;
   *) echo "    no Omarchy theme found — desktop integration steps skipped" ;;
 esac
 
@@ -220,16 +215,6 @@ EOF
      which is how a lot of people open things.
 EOF
   NEXT_STEP=d
-elif [[ "$OMARCHY" == 3 ]]; then
-  cat <<EOF
-
-  b) Waybar — merge these into ~/.config/waybar/, then \`omarchy restart waybar\`:
-
-       $REPO/legacy/waybar/mimarchy-module.jsonc  -> config.jsonc, and add
-                                                     "custom/mimarchy" to modules-right
-       $REPO/legacy/waybar/mimarchy-style.css     -> style.css
-EOF
-  NEXT_STEP=c
 else
   cat <<EOF
 

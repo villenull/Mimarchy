@@ -11,8 +11,7 @@ Lighting reaches the motherboard headers and the card over the OpenRGB SDK;
 the cooler's display is driven directly over HID with a protocol
 reverse-engineered for it.
 
-Runs on **Omarchy 4** and on Omarchy 3.x. Both theme formats are read, so an
-install keeps working across the upgrade.
+Runs on **Omarchy 4**.
 
 ![Mimarchy panel, linked](docs/panel-linked.png)
 ![Mimarchy panel, unlinked](docs/panel-unlinked.png)
@@ -126,12 +125,6 @@ The plugin deliberately installs no backend of its own — `omarchy plugin add`
 never runs install hooks or asks for sudo, which is exactly the property that
 makes it safe to run. Until `install.sh` has been run, the widget says so
 instead of drawing an empty panel.
-
-**Omarchy 3.x (legacy).** The Waybar module is kept in
-[`legacy/waybar/`](legacy/waybar/): merge `mimarchy-module.jsonc` and
-`mimarchy-style.css` into `~/.config/waybar/`, add `"custom/mimarchy"` to
-`modules-right`, and add the `windowrule` line the installer prints to
-`~/.config/hypr/hyprland.conf`.
 
 > **One ordering constraint the script handles for you:** OpenRGB's broad
 > GPU/I2C detection is a documented total-system freeze on some cards

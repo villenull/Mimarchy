@@ -44,18 +44,6 @@ blue = "#7aa2f7"
 magenta = "#ad8ee6"
 """
 
-V3 = """\
-background = "#1a1b26"
-foreground = "#a9b1d6"
-color1 = "#f7768e"
-color2 = "#9ece6a"
-color3 = "#e0af68"
-color4 = "#7aa2f7"
-color5 = "#ad8ee6"
-color6 = "#449dab"
-"""
-
-
 def write_theme(directory: Path, body: str) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "colors.toml").write_text(body)
@@ -83,12 +71,6 @@ class TestLedColour:
 
         assert theme.led_colour("accent") == (0x7A, 0xA2, 0xF7)
         assert theme.led_colour("green") == (0x9E, 0xCE, 0x6A)
-
-    def test_resolves_v3_via_ansi_slots(self, xdg):
-        write_theme(xdg / "config" / "omarchy" / "current" / "theme", V3)
-
-        assert theme.led_colour("red") == (0xF7, 0x76, 0x8E)     # color1
-        assert theme.led_colour("accent") == (0x7A, 0xA2, 0xF7)  # color4
 
     def test_unknown_role_is_refused(self, xdg):
         write_theme(v4_dir(xdg), V4)

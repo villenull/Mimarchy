@@ -1,23 +1,14 @@
 """Colours borrowed from the user's Omarchy theme, resolved at runtime.
 
 Omarchy ships every theme as a `colors.toml` and symlinks the active one into
-place. Reading that symlink on every lookup is what makes this tool re-theme
-with everything else on the desktop instead of carrying its own palette.
+place, at `~/.local/state/omarchy/current/theme`. Reading that symlink on
+every lookup is what makes this tool re-theme with everything else on the
+desktop instead of carrying its own palette.
 
-Two things about that file changed in Omarchy 4, and this module handles both
-so a single build works either side of the upgrade:
-
-* **Where it lives.** v3 kept the active theme at
-  `~/.config/omarchy/current/theme`; v4 moved it to
-  `~/.local/state/omarchy/current/theme` and left no compatibility symlink.
-  Both are tried, newest first.
-* **What is in it.** v3 spelled the palette as the 16 ANSI slots — `color0`
-  through `color15` — plus a few extras. v4 replaced that with *semantic*
-  keys (around two dozen, and not a fixed count: `orange` and `brown` are
-  absent from three of the stock themes): `accent`, `selection`, `muted`,
-  four background and four foreground tiers, eight named colours, and bright
-  variants of most. Both dialects resolve through the same `led_colour`, so
-  nothing downstream knows which one it got.
+The palette is *semantic* keys (around two dozen, and not a fixed count:
+`orange` and `brown` are absent from three of the stock themes): `accent`,
+`selection`, `muted`, four background and four foreground tiers, eight named
+colours, and bright variants of most.
 
 Roles are assigned to *keys*, never to hex values, which is the whole point:
 `accent` is "the theme's accent" in every theme, so it tracks the theme rather
@@ -38,22 +29,18 @@ from pathlib import Path
 
 
 def theme_dirs() -> list[Path]:
-    """Candidate active-theme directories, most current first.
+    """Candidate active-theme directories.
 
-    Omarchy 4 moved the active theme out of `~/.config` and into the XDG state
-    directory, without leaving a symlink behind. Returning both — rather than
-    picking one at import time — is what lets the same install work on a
-    machine that has not upgraded yet, and makes the upgrade a no-op here.
+    A list rather than a single path so an explicit override — passed by
+    callers, and by every test — has somewhere to slot in without a second
+    code path. In practice there is exactly one: Omarchy 4's XDG state
+    directory.
 
     Read from the environment on every call rather than cached at import, so
-    the XDG variables can be pointed elsewhere (which is how this is tested).
+    the XDG variable can be pointed elsewhere (which is how this is tested).
     """
     state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
-    config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    return [
-        state / "omarchy" / "current" / "theme",     # Omarchy 4
-        config / "omarchy" / "current" / "theme",    # Omarchy 3.x
-    ]
+    return [state / "omarchy" / "current" / "theme"]
 
 
 def _channels(hex_colour: str) -> tuple[float, float, float] | None:
@@ -71,9 +58,7 @@ def _read_theme(theme_dir: Path | None = None) -> dict | None:
 
     With no directory given, every candidate from `theme_dirs()` is tried in
     order and the first one that parses wins; a directory passed explicitly is
-    the only one consulted. A malformed file falls through to the next candidate
-    rather than ending the search, so a half-written v4 theme does not hide a
-    working v3 one during an upgrade.
+    the only one consulted.
     """
     for candidate in ([theme_dir] if theme_dir is not None else theme_dirs()):
         try:
@@ -123,21 +108,6 @@ LED_ROLES = ("accent", "red", "orange", "yellow", "green", "cyan", "blue",
 #: a whiter one.
 LED_VALUE_FLOOR = 0.55
 
-#: Where to look for a role in a v3 palette, which had no semantic names beyond
-#: `accent` and used the ANSI slots for hues. `orange` has no slot of its own in
-#: a 16-colour palette and borrows yellow — the closest thing available, not a
-#: claim that they are the same colour.
-#:
-#: Consulted only after the role's own name misses, so it never overrides a real
-#: key. That ordering is what makes `accent` work on both dialects without a
-#: dialect test: v3 defined `accent` literally *and* had slots, so keying off the
-#: dialect would send v3 to `color4` and quietly ignore the theme's own accent.
-_V3_LED_SLOTS = {
-    "red": "color1", "orange": "color3", "yellow": "color3",
-    "green": "color2", "cyan": "color6", "blue": "color4",
-    "magenta": "color5", "accent": "color4",
-}
-
 
 def _lift(rgb: tuple[int, int, int]) -> tuple[int, int, int]:
     """Raise a colour to `LED_VALUE_FLOOR` if it falls below it, preserving hue."""
@@ -167,8 +137,6 @@ def led_colour(role: str, theme_dir: Path | None = None
         return None
 
     value = raw.get(role)
-    if not isinstance(value, str):
-        value = raw.get(_V3_LED_SLOTS.get(role, ""))
     if not isinstance(value, str):
         return None
 

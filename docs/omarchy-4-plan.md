@@ -1,5 +1,13 @@
 # Omarchy 4 upgrade & public release plan
 
+> **Superseded, 2026-08-23:** the "Omarchy 4-first" decision below kept 3.x
+> support as a legacy path — Waybar snippets, the `Omarchy 3.x (legacy)`
+> README section, `install.sh`'s v3 branch, and `theme.py`'s ANSI-slot
+> fallback. All of it was removed outright in a later pass; this repo now
+> supports Omarchy 4 only. Left as written below because it is an accurate
+> record of what was decided and why at the time — just no longer of what the
+> repo does.
+
 Omarchy 4.0 "Quattro" (released 2026-08-14) replaced the entire Waybar-era
 desktop shell with a single Quickshell process, moved the theme state, and
 redesigned the theme palette. Two of Mimarchy's three Omarchy integration
