@@ -54,8 +54,16 @@ if [[ ! -x "$BIN/python" ]]; then
   mkdir -p "$(dirname "$VENV")"
   python3 -m venv "$VENV"
 fi
-"$BIN/python" -m pip install --quiet --upgrade pip
-"$BIN/python" -m pip install --quiet -e "$REPO"
+# Everything pip may fetch is pinned by version and artifact hash in
+# requirements.lock, so the venv's contents are decided by this checkout's
+# commit rather than by whatever PyPI resolves to on install day — the
+# property the marketplace's review of an exact commit depends on. Mimarchy
+# itself then installs from the checkout with --no-deps (the lock already
+# provided the whole closure) and --no-build-isolation (the build runs on the
+# locked setuptools instead of fetching a fresh backend). The one unpinned
+# input left is the checkout, and the checkout is the thing being installed.
+"$BIN/python" -m pip install --quiet --require-hashes -r "$REPO/requirements.lock"
+"$BIN/python" -m pip install --quiet --no-deps --no-build-isolation -e "$REPO"
 echo "    installed into $VENV"
 
 say "2/6  Narrowing OpenRGB's detector list (before first start)"
@@ -161,11 +169,21 @@ esac
 
 say "6/6  Manual steps left"
 
-cat <<EOF
+# Quoted heredoc: the printed commands carry backslashes and quoting that must
+# reach the user's terminal verbatim.
+cat <<'EOF'
 
-  a) The cooler display's hidraw node is root-only without a udev rule:
+  a) The cooler display's hidraw node is root-only without a udev rule. The
+     command below spells the rule out instead of copying it from this
+     checkout: root writes exactly the two lines you can read here, not
+     whatever a file in a user-writable directory holds by the time sudo
+     runs. (udev/99-mimarchy.rules is the same rule, kept for reference;
+     tests assert the two never drift.)
 
-       sudo cp "$REPO/udev/99-mimarchy.rules" /etc/udev/rules.d/
+       printf '%s\n' \
+         '# Mimarchy: cooler display (5131:2007) hidraw access; remove with the plugin.' \
+         'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="5131", ATTRS{idProduct}=="2007", TAG+="uaccess", GROUP="input", MODE="0660"' \
+         | sudo tee /etc/udev/rules.d/99-mimarchy.rules >/dev/null
        sudo udevadm control --reload-rules
        sudo udevadm trigger --action=add --subsystem-match=hidraw
 

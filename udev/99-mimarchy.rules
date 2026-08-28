@@ -14,5 +14,11 @@
 # uaccess for a clean boot-time path, group ownership as the one that reliably
 # works. `input` is used because the account is already a member; no new group
 # and no world-writable node.
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="5131", ATTRS{idProduct}=="2007", \
-    TAG+="uaccess", GROUP="input", MODE="0660"
+#
+# install.sh does not have root copy this file out of the checkout — it prints
+# a command with the rule spelled out inline, so what root writes is what the
+# user just read, not what a user-writable directory holds by the time sudo
+# runs. This copy documents the rule and anchors the sync check in
+# tests/test_install_inputs.py; the rule is one line so the two can be
+# compared byte for byte.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="5131", ATTRS{idProduct}=="2007", TAG+="uaccess", GROUP="input", MODE="0660"

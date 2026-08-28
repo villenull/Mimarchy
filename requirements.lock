@@ -1,0 +1,33 @@
+# The exact Python packages install.sh is allowed to fetch, pinned by version
+# AND by the sha256 of the artifacts PyPI serves. install.sh installs this file
+# with `pip install --require-hashes`, which refuses anything that does not
+# match — so what lands in the venv is fixed by the commit that shipped this
+# file, not by whatever PyPI resolves to on install day. That is the property
+# the marketplace review needs: the reviewed commit fully determines the
+# installed code.
+#
+# Both the wheel and the sdist hash are listed for each pin, so the lock still
+# holds anywhere pip falls back to building from source.
+#
+# To bump a pin: change the version, take the new sha256 values from
+#   https://pypi.org/pypi/<package>/<version>/json   (urls[].digests.sha256)
+# and keep tests/test_install_inputs.py green.
+
+# Toolchain. pip is brought to a known version instead of "latest"; setuptools
+# is what builds the editable install under --no-build-isolation, so it has to
+# be in the venv and is locked like everything else.
+pip==26.2.1 \
+    --hash=sha256:71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e \
+    --hash=sha256:f6ad667e89a1fe78046c8f13232b247200f5258d7828f3f7883d660878e0813f
+setuptools==84.0.0 \
+    --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670 \
+    --hash=sha256:f4695c21257f0d9b537ec2692c941d02ee143b7cc1276941349a546573b2ef73
+
+# Runtime dependencies — pyproject.toml says what each is for. Neither has
+# dependencies of its own, so these four pins are the complete closure.
+openrgb-python==0.3.6 \
+    --hash=sha256:3f2679a7464155f9bff244613edf8d459e3509e0577ba9b5c36c806cb2576d9c \
+    --hash=sha256:f3a8f2f21a0e810a1c74279aa6369114ef4f2b1fd35bd91c375e9429258d569b
+hid==1.0.9 \
+    --hash=sha256:6b9289e00bbc1e1589bec0c7f376a63fe03a4a4a1875575d0ad60e3e11a349f4 \
+    --hash=sha256:f4471f11f0e176d1b0cb1b243e55498cc90347a3aede735655304395694ac182
