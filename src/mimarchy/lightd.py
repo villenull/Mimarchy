@@ -38,6 +38,49 @@ from mimarchy.rgb import RGBController, RGBError
 #: 30 leaves comfortable headroom and is smooth for these effects.
 FPS = 30
 
+#: How long every render write may fail continuously before the daemon exits.
+#: Long enough to ride out any transient — OpenRGB restarting under systemd
+#: takes a couple of seconds — and short enough that a dead server is noticed
+#: while someone is still looking at the frozen LEDs.
+WRITE_FAILURE_WINDOW = 5.0
+
+
+class WriteFailureWatch:
+    """Decides when continuous write failure means the connection is dead.
+
+    write_frame failures are swallowed per frame on purpose — one dropped
+    frame is invisible, and exiting on it would flap the service. But the
+    swallow hid the opposite case too: when the OpenRGB server goes away
+    (crash, restart, an OOM kill), every write fails from then on, the client
+    library never repairs its socket, and the daemon kept rendering into it
+    forever — LEDs frozen, service green.
+
+    This draws the line between the two cases: any successful write resets
+    the watch, and only a full WRITE_FAILURE_WINDOW during which *no* write
+    succeeded trips it. A frame that attempted nothing proves nothing — an
+    all-firmware plan writes no frames — so it neither feeds nor resets the
+    streak, and a dead server is still caught the moment rendering resumes.
+
+    Tripping is not handled here. The caller exits, and systemd's Restart=
+    brings the daemon back through its normal startup, which reconnects —
+    the one recovery path that also re-prepares zones and re-applies state.
+    """
+
+    def __init__(self, window: float = WRITE_FAILURE_WINDOW):
+        self._window = window
+        self._failing_since: float | None = None
+
+    def record(self, t: float, *, wrote: int, failed: int) -> bool:
+        """Feed one frame's outcome; True when the dead-connection line is crossed."""
+        if wrote:
+            self._failing_since = None
+            return False
+        if not failed:
+            return False
+        if self._failing_since is None:
+            self._failing_since = t
+        return (t - self._failing_since) >= self._window
+
 
 def _seed(zone_key: str) -> int:
     """A stable per-zone seed for effects that need to *not* be in phase.
@@ -230,6 +273,7 @@ def main() -> None:
 
     apply_plan()
 
+    watch = WriteFailureWatch()
     period = 1.0 / max(args.fps, 1.0)
 
     while not stopping:
@@ -250,14 +294,21 @@ def main() -> None:
             rendered, firmware = plan(rgb, zones, state, t)
             apply_plan()
 
+        wrote = failed = 0
         for key, (target, count) in rendered.items():
             frame = render(target.effect, t, count,
                            colour=tuple(target.colour), speed=target.speed,
                            seed=_seed(key))
             try:
                 rgb.write_frame(key, frame)
+                wrote += 1
             except Exception:  # noqa: BLE001 — a dropped frame is not fatal
-                pass
+                failed += 1
+
+        if watch.record(t, wrote=wrote, failed=failed):
+            sys.exit(f"no render write has succeeded for {WRITE_FAILURE_WINDOW:g}s"
+                     " — treating the OpenRGB connection as dead and exiting,"
+                     " so systemd restarts this daemon into a fresh one")
 
         if args.once:
             return
