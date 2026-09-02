@@ -7,7 +7,14 @@ Description=OpenRGB SDK server (for mimarchy)
 # detection hard-freezes this machine (upstream issue #4888) with the Sapphire
 # RX 9070 XT, and this unit is enabled at login, so an unrestricted config
 # would turn that into a freeze on every boot.
-ExecStart=/usr/bin/openrgb --server --server-port 6742
+# Loopback only. The SDK protocol is unauthenticated, and Mimarchy is its only
+# client here — it connects to 127.0.0.1 (src/mimarchy/rgb.py), and nothing
+# else needs the port. OpenRGB's own default for this listener has been "all
+# interfaces", which offered hardware control to the LAN for no reason; binding
+# it explicitly makes that independent of whichever default the installed build
+# has. install.sh confirms the effective listener after start, and
+# tests/test_install_inputs.py holds this in step with the client's address.
+ExecStart=/usr/bin/openrgb --server --server-host 127.0.0.1 --server-port 6742
 Restart=on-failure
 
 [Install]

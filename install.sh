@@ -8,8 +8,12 @@
 #
 # The ordering matters in one place. OpenRGB's broad GPU/I2C detection is a
 # documented total-system freeze with some cards, and its service is enabled at
-# login — so the detector list is narrowed *before* the server is ever started.
-# Doing it the other way round means a freeze on the next boot.
+# login — so the detector list is narrowed *before* the server is ever started,
+# and the server is enabled only once that narrowing has been verified. Doing
+# it the other way round means a freeze on the next boot. The one detection
+# pass that cannot be narrowed — OpenRGB's very first, which is what creates
+# the list — is never run from here; it is printed for the user to run on
+# purpose.
 
 set -euo pipefail
 
@@ -72,34 +76,52 @@ if ! command -v openrgb >/dev/null; then
   echo "        sudo pacman -S openrgb"
   exit 1
 fi
-# The config only exists once OpenRGB has run at least once, and listing devices
-# is the cheapest way to create it.
-#
-# Be honest about what this costs: it is a full detection pass with every
-# detector enabled — the exact #4888 hazard the rest of this script exists to
-# avoid — because the allowlist cannot be written into a file that is not there
-# yet. A one-shot process is not what makes it safer; the difference is that it
-# happens once, with the user present and watching, instead of on every boot.
-# Machines where the freeze reproduces will hang here, and the honest answer is
-# that this is the one pass that cannot be skipped.
-#
-# Skipped entirely when the config already exists, which is the common case on
-# any machine that has run OpenRGB before.
+# OpenRGB's config — and the full detector list the allowlist is written into
+# — only exists once OpenRGB has run once, and that first run is a detection
+# pass with every detector enabled: the exact #4888 hazard this step exists to
+# prevent. This script used to run that pass itself when the config was
+# missing, on the theory that once, with the user watching, beats every boot.
+# The marketplace review pointed out what the theory skipped: a script that
+# runs a known-freeze pass without asking has not asked. So it no longer does.
+# Without a config this step fails closed — nothing is probed, nothing is
+# enabled below — and the pass is left to the user to run on purpose, with
+# their work saved first.
+DETECTORS_SAFE=no
 if [[ ! -f "$HOME/.config/OpenRGB/OpenRGB.json" ]]; then
-  echo "    creating OpenRGB's config"
-  openrgb --list-devices >/dev/null 2>&1 || true
-fi
-# Not fatal when it declines to guess. The tool leaves the detector list exactly
-# as it found it and explains why, and step 4 is where that gets answered — under
-# `set -e` an exit 1 here would abort the install over a config question, leaving
-# the services uninstalled.
-if "$BIN/python" "$REPO/tools/restrict-openrgb-detectors.py"; then
-  "$BIN/python" "$REPO/tools/restrict-openrgb-detectors.py" --check || true
+  cat <<'EOF'
+    OpenRGB has never run on this machine, so it has no config yet and its
+    detector list cannot be narrowed until it does. Creating that config
+    takes one detection pass with every detector enabled — the documented
+    total-system freeze hazard (OpenRGB issue #4888) — and this script will
+    not run that for you. When you are ready, with your work saved, run it
+    yourself:
+
+        openrgb --list-devices
+
+    then re-run this script. The services are installed below but left
+    disabled until the detector list has been narrowed and verified.
+EOF
 else
-  # The tool has already said which of its reasons applies — no OpenRGB config
-  # yet, or a config whose devices it will not guess detectors for. Repeating a
-  # guess here would contradict it.
-  echo "    (continuing — the detector list is unchanged; see step 4)"
+  # The tool's own exit code is deliberately not the gate: it declines to
+  # guess for hardware it does not know and says so, and an already-narrowed
+  # list is safe whether or not it could add to it. The verification is the
+  # --check run — exactly the safe set enabled, nothing more — and only that
+  # decides whether the server may be enabled.
+  "$BIN/python" "$REPO/tools/restrict-openrgb-detectors.py" || true
+  if "$BIN/python" "$REPO/tools/restrict-openrgb-detectors.py" --check; then
+    DETECTORS_SAFE=yes
+  else
+    cat <<EOF
+
+    The detector list did not verify as exactly the safe set, so the server
+    is left disabled: an enabled openrgb.service with an unverified list is
+    the every-boot freeze this step exists to prevent. Fix the list, then
+    re-run this script — or verify it and enable the services by hand:
+
+        $REPO/tools/restrict-openrgb-detectors.py --check
+        systemctl --user enable --now openrgb.service mimarchy-light.service
+EOF
+  fi
 fi
 
 say "3/6  User services"
@@ -109,13 +131,53 @@ for unit in mimarchy-light mimarchy-display; do
   sed "s|@BIN@|$BIN|g" "$REPO/systemd/$unit.service" > "$UNITS/$unit.service"
 done
 systemctl --user daemon-reload
-systemctl --user enable --now openrgb.service
-systemctl --user enable --now mimarchy-light.service
-# The display stream is left disabled: it lights the cooler's panel, which not
-# everyone wants on, and the bar panel's `d` key (or a click on the row) starts
-# it on demand.
+# The display stream is enabled but never started here: it lights the cooler's
+# panel, which not everyone wants on, and the bar panel's `d` key (or a click on
+# the row) starts it on demand. It talks to the cooler over HID, never to
+# OpenRGB, so it sits outside the gate below.
 systemctl --user enable mimarchy-display.service
-echo "    openrgb + mimarchy-light started; mimarchy-display enabled but not started"
+
+# Confirms the listener the running server actually bound, not just the flag
+# the unit passes — the unit binds it to loopback, and this is the check that
+# it took. Detection runs before the port opens, so this waits for it, briefly.
+confirm_loopback_listener() {
+  local listen
+  if ! command -v ss >/dev/null; then
+    echo "    (ss is not installed, so the listener was not confirmed; the unit binds 127.0.0.1)"
+    return
+  fi
+  for _ in $(seq 1 30); do
+    listen="$(ss -ltnH 'sport = :6742' 2>/dev/null | awk '{print $4}' || true)"
+    if [[ -n "$listen" ]]; then
+      if [[ "$listen" == 127.0.0.1:6742 ]]; then
+        echo "    OpenRGB's SDK server is listening on 127.0.0.1:6742 only"
+      else
+        echo "    WARNING: OpenRGB's SDK server is listening on $listen — expected 127.0.0.1:6742 only."
+        echo "             If openrgb.service was already running before this install, it is still on"
+        echo "             its old command line: restart it (or reboot), then re-check with"
+        echo "             ss -ltn 'sport = :6742'. Otherwise check ExecStart in $UNITS/openrgb.service."
+      fi
+      return
+    fi
+    sleep 0.5
+  done
+  echo "    (could not confirm the SDK server's listener yet — later: ss -ltn 'sport = :6742')"
+}
+
+# The server, and the renderer that pulls it in through Wants=, are enabled
+# only when step 2 verified the detector list. Otherwise both are disabled —
+# including if an earlier run had enabled them, since an enabled server with
+# an unverified list is precisely the freeze-on-every-boot this guards
+# against — and step 2 has already printed the way back.
+if [[ "$DETECTORS_SAFE" == yes ]]; then
+  systemctl --user enable --now openrgb.service
+  systemctl --user enable --now mimarchy-light.service
+  echo "    openrgb + mimarchy-light started; mimarchy-display enabled but not started"
+  confirm_loopback_listener
+else
+  systemctl --user disable openrgb.service mimarchy-light.service >/dev/null 2>&1 || true
+  echo "    units installed; openrgb + mimarchy-light left disabled until the detector list verifies (step 2)"
+fi
 
 say "4/6  Point Mimarchy at your hardware"
 cat <<EOF

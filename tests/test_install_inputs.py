@@ -15,6 +15,14 @@ agreement that drifts unless a test holds it still:
   printed command instead of being read out of this user-writable checkout at
   elevation time — and that printed line must stay byte-identical to the
   reference copy in udev/99-mimarchy.rules.
+
+* install.sh never runs OpenRGB's detection itself — the first-run pass is
+  the documented freeze hazard, so it is printed for the user to run on
+  purpose — and it enables the server only inside the branch where
+  `restrict-openrgb-detectors.py --check` verified the detector list.
+
+* The SDK server is unauthenticated, so the unit binds it to loopback, and the
+  unit's bind address is the address the client connects to.
 """
 
 from __future__ import annotations
@@ -96,3 +104,52 @@ def test_no_privileged_step_reads_the_checkout():
     assert not re.search(r"sudo\s+(cp|install)\b[^\n]*\$REPO", INSTALL_SH), (
         "install.sh prints a sudo command that reads from the checkout"
     )
+
+
+def executed_lines(script: str) -> str:
+    """The script minus its printed heredocs — what it runs, not what it says.
+
+    The printed text quotes commands for the user to run deliberately, the
+    detection pass among them, so a check on the raw file would see the very
+    command it exists to rule out.
+    """
+    return re.sub(r"cat <<'?EOF'?\n.*?\nEOF\n", "", script, flags=re.S)
+
+
+def test_install_never_runs_openrgb_detection_itself():
+    """OpenRGB's first run creates its config by probing with every detector
+    enabled — the documented freeze hazard. A script that runs it without
+    asking has not asked, so it is printed for the user and never executed."""
+    code = executed_lines(INSTALL_SH)
+    assert "openrgb --list-devices" not in code
+    assert re.search(r"^\s*openrgb\b", code, re.M) is None
+    assert "openrgb --list-devices" in INSTALL_SH   # still told how, just not done for them
+
+
+def test_services_start_only_after_the_detector_list_verifies():
+    """The enable lives inside the branch a passing --check guards, and nowhere
+    else — an enabled server with an unverified list is the every-boot freeze."""
+    code = executed_lines(INSTALL_SH)
+    gate = re.search(r'if "\$BIN/python" "\$REPO/tools/restrict-openrgb-detectors\.py" --check; then'
+                     r'\s*DETECTORS_SAFE=yes', code)
+    assert gate, "DETECTORS_SAFE must be set only by a passing --check"
+    assert code.count("DETECTORS_SAFE=yes") == 1
+
+    branch = re.search(r'if \[\[ "\$DETECTORS_SAFE" == yes \]\]; then(.*?)\nelse', code, re.S)
+    assert branch, "service enabling must be gated on DETECTORS_SAFE"
+    for unit in ("openrgb.service", "mimarchy-light.service"):
+        assert f"enable --now {unit}" in branch.group(1), unit
+        assert code.count(f"enable --now {unit}") == 1, f"{unit} is enabled outside the gate"
+
+
+def test_sdk_server_binds_loopback_and_matches_the_client():
+    """The SDK protocol is unauthenticated. The unit binds it to 127.0.0.1
+    explicitly rather than trusting OpenRGB's default, and that must be the
+    address the client connects to — one setting that lives in two files."""
+    unit = (REPO / "systemd" / "openrgb.service").read_text()
+    exec_start = re.search(r"^ExecStart=(.+)$", unit, re.M).group(1)
+    assert "--server-host 127.0.0.1" in exec_start
+    assert "--server " in exec_start
+
+    rgb = (REPO / "src" / "mimarchy" / "rgb.py").read_text()
+    assert re.search(r'host: str = "127\.0\.0\.1"', rgb)

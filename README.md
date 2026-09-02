@@ -55,9 +55,9 @@ cd mimarchy
 ./install.sh
 ```
 
-That creates a virtualenv, narrows OpenRGB's detector list, installs and starts
-the user services, and prints the two or three steps that need root or a config
-merge. It detects which Omarchy you are on and prints the matching desktop
+That creates a virtualenv, narrows OpenRGB's detector list, installs the user
+services — and starts them only once the detector list verifies as exactly the
+safe set — and prints the two or three steps that need root or a config merge. It detects which Omarchy you are on and prints the matching desktop
 integration — see below for adding the bar icon, and for a keybinding that
 opens the panel directly.
 
@@ -130,9 +130,24 @@ instead of drawing an empty panel.
 > GPU/I2C detection is a documented total-system freeze on some cards
 > ([#4888](https://gitlab.com/CalcProgrammer1/OpenRGB/-/issues/4888)), and its
 > service starts at login. `install.sh` narrows the detector list *before*
-> starting the server for the first time. If you set this up by hand, do it in
-> that order — and re-run `tools/restrict-openrgb-detectors.py` after ever
-> opening the OpenRGB GUI, which rewrites the config.
+> starting the server, and enables the server only once
+> `tools/restrict-openrgb-detectors.py --check` confirms that exactly the safe
+> set is enabled; if it cannot confirm that, the units are installed but
+> `openrgb.service` and `mimarchy-light.service` stay disabled, and it says
+> why. If you set this up by hand, do it in that order — and re-run the tool
+> after ever opening the OpenRGB GUI, which rewrites the config.
+>
+> **The one pass it will not run for you:** OpenRGB's very first run is what
+> creates its config, and that run is a detection pass with every detector
+> enabled — the hazard itself. On a machine where OpenRGB has never run,
+> `install.sh` stops and asks you to run `openrgb --list-devices` yourself,
+> with your work saved, then re-run it. It never runs that pass on its own.
+>
+> **Network exposure:** the SDK protocol is unauthenticated, so
+> `openrgb.service` binds the server to `127.0.0.1` only (`--server-host`);
+> Mimarchy is its only client and connects to the same address. `install.sh`
+> confirms the effective listener after starting it, and
+> `tests/test_install_inputs.py` keeps the unit and the client in step.
 >
 > The allowlist follows the devices in *your* config, so it is your hardware's
 > rather than this machine's. If `mimarchy-setup` shows no devices at all, that
