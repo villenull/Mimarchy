@@ -61,7 +61,7 @@ Verify with `git log --oneline -6` and `git tag`.
 | `73fb365` | Round-1 marketplace fixes: `requirements.lock` with sha256 pins, `--require-hashes` / `--no-deps --no-build-isolation` installs, udev rule printed inline instead of `sudo cp` from the checkout, `tests/test_install_inputs.py`. Version 0.4.1. | Accepted by the maintainer ("earlier supply-chain findings are resolved"). |
 | `2c4faad` | `WriteFailureWatch` in `lightd.py`: exit after 5 s of *total* write failure so `Restart=on-failure` reconnects; `tests/test_lightd_recovery.py`. | On main. |
 | `b126f33` | Round-2 marketplace fixes: `install.sh` fails closed (never runs the detection pass; enables `openrgb`/`mimarchy-light` only inside the branch a passing `restrict-openrgb-detectors.py --check` guards, disables them otherwise); `openrgb.service` binds `--server-host 127.0.0.1`; `install.sh` confirms the effective listener with `ss`; README documents both; three more tests. Version 0.4.2. | On main. **Not yet validated by the marketplace** (§3). |
-| this file's commit | `docs/HANDOFF-2026-09.md` + `CLAUDE.md`. Tag **`v0.4.2`**. | Head of main. |
+| this file's commit | `docs/HANDOFF-2026-09.md` + `CLAUDE.md`. **No `v0.4.2` tag exists yet:** the cloud session's git proxy refused tag pushes (HTTP 403, branches only). Create it as your first git action: `git tag -a v0.4.2 -m "Mimarchy 0.4.2" origin/main && git push origin v0.4.2`. | Head of main. |
 
 - Branch `claude/edit-resubmit-submission-0fyh4d` is the previous session's
   working branch and is identical to `main`; delete it when convenient.
@@ -404,3 +404,6 @@ publish. If the honest answer is "wait for the maintainer", say that.
   will wake it.
 - Its cloud clone and scratch files are gone with it. Everything it produced
   that matters is on `main`.
+- It could not push tags (proxy policy), so `v0.4.2` is a task for you, not a
+  fact — see the table in §2. `manifest.json` and `pyproject.toml` already say
+  0.4.2.
