@@ -26,6 +26,22 @@ ignores the SDK entirely.
 (`0b05:19af`); the GPU has its own reached over I2C *on the card* (`/dev/i2c-7`,
 address `0x28`). Different hardware, different buses.
 
+**If the card vanishes from OpenRGB, check the bus before anything else.**
+In September 2026 the card's LED controller stopped answering at `0x28` — on
+the OEM bus and on every other bus the card exposes — across a warm reboot,
+while the amdgpu adapter, the detector list and the kernel's I2C messages were
+all unchanged. The detector is one `read_byte(0x28)`, so the same question
+can be asked by hand without OpenRGB, in a few milliseconds:
+
+    i2cdetect -y -r 7 0x28 0x28     # `28` = the controller answers; `--` = silent
+
+A silent controller is the microcontroller itself, not the driver stack. The
+slot's standby rail keeps it powered through reboots and shutdowns, so the
+reset is a cold boot: power off, PSU switch off for ~30 s, power on.
+`mimarchy-ctl status` now says `gpu: NOT DETECTED` in that state, and the
+daemon logs it at startup, so it is no longer something to discover a week
+later (`docs/gpu-incident-2026-09.md`).
+
 The GPU's ARGB connector is an **output** — a source for syncing other devices to
 the card, not an input — so no motherboard header can drive the card's LEDs, and
 I2C is the only route. Verified physically: rewiring the GPU onto the motherboard

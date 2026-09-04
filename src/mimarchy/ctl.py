@@ -31,7 +31,7 @@ import argparse
 import json
 import sys
 
-from mimarchy import lightstate
+from mimarchy import detection, lightstate
 from mimarchy.config import load_config
 from mimarchy.effects import COLOUR_EFFECTS, EFFECTS, SPEED_LEVELS, nearest_speed
 from mimarchy.hwmon import (read_cpu_fan_rpm, read_cpu_temp, read_gpu_temp,
@@ -121,11 +121,27 @@ def cmd_status(args: argparse.Namespace) -> int:
     # panel is open — from inside the user's long-lived shell process.
     sensors = snapshot()
 
+    # Detection state is the daemon's report of what OpenRGB actually
+    # produced for each configured zone, not what the state file wishes for.
+    # Without it `gpu: rainbow` + `lighting: running` was the whole story of
+    # a card that had not been detected for a week. None until the daemon
+    # has started this login — "unknown" is the honest answer then, not "ok".
+    report = detection.load()
+    zones = None if report is None else {
+        key: {"detected": zone.detected,
+              "configured_device": zone.configured_device,
+              "device_name": zone.device_name,
+              "led_count": zone.led_count}
+        for key, zone in report.zones.items()
+    }
+
     payload = {
         "linked": state.linked,
         "targets": targets,
         "lighting_active": unit_active(LIGHT_UNIT),
         "display_active": unit_active(DISPLAY_UNIT),
+        "zones": zones,
+        "missing_zones": [] if report is None else report.missing,
         "speed_stops": len(SPEED_LEVELS),
         "sensors": {
             "cpu_temp": read_cpu_temp(sensors),
@@ -151,6 +167,12 @@ def _human_status(payload: dict) -> str:
         lines.append(f"{key}: {target['effect']}{speed}")
     lines.append("linked" if payload["linked"] else "unlinked")
     lines.append(f"lighting: {'running' if payload['lighting_active'] else 'stopped'}")
+    # The line this incident lacked: a configured zone with no device behind
+    # it, named, next to the state that was pretending otherwise.
+    for key in payload.get("missing_zones") or ():
+        zone = (payload.get("zones") or {}).get(key) or {}
+        lines.append(f"{key}: NOT DETECTED — no OpenRGB device matching "
+                     f"{zone.get('configured_device', '?')!r}")
     lines.append(f"display:  {'on' if payload['display_active'] else 'off'}")
 
     sensors = payload["sensors"]

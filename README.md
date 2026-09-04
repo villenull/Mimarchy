@@ -203,6 +203,12 @@ Writes go through an atomic write-then-rename, so a panel click and a scripted
 write cannot interleave into a half-written file. Nothing here talks to
 hardware; `mimarchy-lightd` still owns that.
 
+`status` also reports what the daemon actually found: a configured zone whose
+device OpenRGB did not produce shows as `gpu: NOT DETECTED — no OpenRGB device
+matching '...'` (and as `missing_zones` in the JSON), next to the state that
+would otherwise look healthy. The daemon logs the same line when it starts,
+after waiting a bounded 20 s for a controller that is merely slow to appear.
+
 ### Lighting that follows your theme
 
 Give a colour a *role* — `accent`, `red`, `orange`, `yellow`, `green`, `cyan`,

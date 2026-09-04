@@ -27,8 +27,8 @@ import sys
 import time
 import zlib
 
-from mimarchy import lightstate
-from mimarchy.config import load_config
+from mimarchy import detection, lightstate
+from mimarchy.config import Config, load_config
 from mimarchy.effects import (COLOUR_EFFECTS, SPATIAL_EFFECTS,
                               firmware_period, render,
                               unhinged_firmware_phase)
@@ -37,6 +37,23 @@ from mimarchy.rgb import RGBController, RGBError
 #: The board tops out around 60 fps for a 60-LED write (measured 15.9 ms/frame).
 #: 30 leaves comfortable headroom and is smooth for these effects.
 FPS = 30
+
+#: How long to keep asking OpenRGB for a configured zone that is absent when
+#: the daemon starts, before settling for the zones that are there.
+#:
+#: Two different absences look identical at startup. OpenRGB's SDK listener
+#: opens before its detection pass has finished, so a daemon that connects
+#: early can be handed a device list with the slow-to-detect controllers not
+#: in it yet; that one resolves itself in seconds. A controller that has
+#: genuinely gone — the graphics card in the September 2026 incident, whose
+#: LED microcontroller dropped off its I2C bus and stayed off — never
+#: resolves. Polling for a bounded window tells the two apart: the first is
+#: caught by the second or third look, and the second costs one delayed start
+#: and a plain line in the journal rather than a zone that is silently dark
+#: for a week. After the window the daemon runs with whatever it found, since
+#: the zones that *were* detected are still worth lighting.
+MISSING_ZONE_GRACE = 20.0
+MISSING_ZONE_POLL = 4.0
 
 #: How long every render write may fail continuously before the daemon exits.
 #: Long enough to ride out any transient — OpenRGB restarting under systemd
@@ -80,6 +97,63 @@ class WriteFailureWatch:
         if self._failing_since is None:
             self._failing_since = t
         return (t - self._failing_since) >= self._window
+
+
+def missing_zones(config: Config, detected: dict[str, int]) -> list[str]:
+    """Configured zone keys OpenRGB did not produce a device for, in config order."""
+    return [key for key in config.zones if key not in detected]
+
+
+def describe_missing(config: Config, missing: list[str]) -> str:
+    """One journal line per absent zone, saying what was looked for and where
+    to look next — the message this incident lacked."""
+    lines = []
+    for key in missing:
+        zone = config.zones[key]
+        lines.append(
+            f"zone {key!r} not detected: no OpenRGB device matching "
+            f"{zone.device!r} (zone {zone.zone}). Check `mimarchy-setup --list`; "
+            "if the device is missing there too, OpenRGB did not detect it — "
+            "for a GPU whose controller has dropped off its I2C bus, a cold "
+            "boot (power off at the PSU) is the known fix."
+        )
+    return "\n".join(lines)
+
+
+def settle_zones(config: Config, connect, *, grace: float = MISSING_ZONE_GRACE,
+                 poll: float = MISSING_ZONE_POLL, clock=time.monotonic,
+                 sleep=time.sleep):
+    """Connect, and keep reconnecting for up to `grace` seconds while a
+    configured zone is missing.
+
+    Returns the controller and its zone map once every configured zone is
+    present or the window closes. Each look is a fresh connection because the
+    SDK client enumerates devices once, on connect; there is no cheaper way to
+    ask OpenRGB again. `connect` is the controller factory — injected so the
+    tests can hand back a sequence of device lists without a server.
+    """
+    deadline = clock() + grace
+    while True:
+        rgb = connect()
+        zones = {z.key: z.led_count for z in rgb.list_zones()}
+        missing = missing_zones(config, zones)
+        if not missing or clock() >= deadline:
+            return rgb, zones, missing
+        sleep(poll)
+
+
+def report_detection(rgb, config: Config, zones: dict[str, int]) -> detection.Detection:
+    """What `mimarchy-ctl status` will show for each configured zone."""
+    found = {z.key: z for z in rgb.list_zones()}
+    report = detection.Detection()
+    for key, cfg in config.zones.items():
+        info = found.get(key)
+        report.zones[key] = detection.ZoneDetection(
+            configured_device=cfg.device,
+            device_name=info.device_name if info else None,
+            led_count=zones.get(key, 0),
+        )
+    return report
 
 
 def _seed(zone_key: str) -> int:
@@ -222,13 +296,19 @@ def main() -> None:
 
     config = load_config()
     try:
-        rgb = RGBController(config)
+        rgb, zones, missing = settle_zones(config, lambda: RGBController(config))
     except RGBError as exc:
         sys.exit(str(exc))
 
-    zones = {z.key: z.led_count for z in rgb.list_zones()}
+    # Written before the zone check below exits, so `status` can say *which*
+    # zones were missing even when the answer was all of them.
+    detection.save(report_detection(rgb, config, zones))
     if not zones:
-        sys.exit("no controllable zones detected")
+        sys.exit("no controllable zones detected\n" + describe_missing(config, missing))
+    if missing:
+        print(describe_missing(config, missing), file=sys.stderr)
+        print(f"rendering the zones that were found: {', '.join(zones)}",
+              file=sys.stderr)
 
     state = lightstate.load()
     last_seen = lightstate.mtime()

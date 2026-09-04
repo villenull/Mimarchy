@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import pytest  # noqa: E402
 
-from mimarchy import ctl, lightstate  # noqa: E402
+from mimarchy import ctl, detection, lightstate  # noqa: E402
 from mimarchy.effects import SPEED_LEVELS  # noqa: E402
 
 
@@ -30,6 +30,9 @@ def isolated(tmp_path, monkeypatch):
     """Temp state, no systemd, deterministic sensors."""
     monkeypatch.setattr(lightstate, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(lightstate, "PERSIST_PATH", tmp_path / "persist.json")
+    # The daemon's detection report lives in the runtime dir too; a test must
+    # see the report it wrote itself, never the real daemon's.
+    monkeypatch.setattr(detection, "DETECTION_PATH", tmp_path / "detection.json")
     monkeypatch.setattr(ctl, "unit_active", lambda unit: False)
     monkeypatch.setattr(ctl, "set_unit", lambda unit, running: None)
     # The readers take an optional pre-read snapshot so `status` spawns
@@ -399,6 +402,59 @@ class TestWriteDiscipline:
         capsys.readouterr()
 
         assert lightstate.STATE_PATH.read_text() == before
+
+
+class TestStatusReportsDetection:
+    """`status` says which configured zones OpenRGB actually produced.
+
+    It used to read the desired state and ask systemd whether the unit was
+    up, which let a card that had not been detected for a week show as
+    `gpu: rainbow` + `lighting: running`. The daemon now leaves a report of
+    what it found, and `status` carries it — with "unknown" as the honest
+    answer before the daemon has started, rather than "fine".
+    """
+
+    def _report(self, missing: bool) -> None:
+        detection.save(detection.Detection(zones={
+            "cpu_fans": detection.ZoneDetection(
+                configured_device="ASUS PRIME X870-P WIFI",
+                device_name="ASUS PRIME X870-P WIFI", led_count=15),
+            "gpu": detection.ZoneDetection(
+                configured_device="Sapphire Radeon RX 9070 XT Nitro+",
+                device_name=None if missing else "Sapphire Radeon RX 9070 XT Nitro+",
+                led_count=0 if missing else 1),
+        }))
+
+    def test_no_report_is_unknown_not_ok(self, capsys):
+        assert ctl.main(["status", "--json"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["zones"] is None
+        assert payload["missing_zones"] == []
+
+    def test_a_missing_zone_is_named(self, capsys):
+        self._report(missing=True)
+        assert ctl.main(["status", "--json"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["missing_zones"] == ["gpu"]
+        assert payload["zones"]["gpu"]["detected"] is False
+        assert payload["zones"]["gpu"]["device_name"] is None
+        assert payload["zones"]["cpu_fans"]["detected"] is True
+        assert payload["zones"]["cpu_fans"]["led_count"] == 15
+
+    def test_the_human_output_says_so_next_to_the_effect(self, capsys):
+        self._report(missing=True)
+        assert ctl.main(["status"]) == 0
+        out = capsys.readouterr().out
+        assert "gpu: NOT DETECTED" in out
+        assert "Sapphire Radeon RX 9070 XT Nitro+" in out
+
+    def test_everything_found_adds_no_noise(self, capsys):
+        self._report(missing=False)
+        assert ctl.main(["status"]) == 0
+        out = capsys.readouterr().out
+        assert "NOT DETECTED" not in out
+        assert ctl.main(["status", "--json"]) == 0
+        assert json.loads(capsys.readouterr().out)["missing_zones"] == []
 
 
 def test_every_subcommand_is_reachable():

@@ -1,5 +1,12 @@
 # Handoff — September 2026
 
+> **Superseded in part on 2026-09-04.** The local session found that §4's
+> timeline is wrong — the card was already undetected at the Aug 30 boot,
+> a day before the restart blamed here — and that its LED controller is
+> silent on every I2C bus. See `docs/gpu-incident-2026-09.md` for the
+> evidence, what was reinstalled, and what remains. The rest of this file
+> (marketplace state, decisions, the uninstall record) still stands.
+
 **Read this whole file before doing anything else.** It is written for a Claude
 Code instance running *locally* on Diego Huyke's Omarchy PC (hostname
 `fbi-pc`), with a terminal and a webcam pointed at the graphics card. A
@@ -65,7 +72,7 @@ Verify with `git log --oneline -6` and `git tag`.
 
 - Branch `claude/edit-resubmit-submission-0fyh4d` is the previous session's
   working branch and is identical to `main`; delete it when convenient.
-- Test suite: 274 tests. Run them exactly as `CLAUDE.md` describes (a venv
+- Test suite: 274 tests at the time of writing (285 as of 0.4.3). Run them exactly as `CLAUDE.md` describes (a venv
   built from `requirements.lock`, then `pytest`). They must stay green.
 - A memory-hardening change (`MALLOC_ARENA_MAX=2`, `MemoryHigh=300M` in
   `openrgb.service`) was written and then **deliberately dropped** before
