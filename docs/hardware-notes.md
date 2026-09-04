@@ -100,6 +100,17 @@ expected — and spectrum's instantaneous hues agree within 8 degrees.
 The cost is that lighting only animates while the daemon runs; stopping it
 freezes the LEDs on their last frame.
 
+**What the stream costs, measured.** `openrgb` sat at about 4 % of one core
+while the card was driven at 30 fps (4.4 s CPU in the first 106 s after a
+boot; 9 h 26 min over a working week in August) and at 0.3 % on the same
+effects with the card absent. The render is not the cost; the I2C write to
+the card's controller is. Its memory is 25–45 MB resident; the "8 % RAM" a
+system monitor shows is virtual address space from mapping the GPU. Since
+0.4.4 the daemon sends a frame only when it differs from the last one that
+went out (re-sent once a second regardless, so a dropped packet cannot
+strand a zone), which removes nearly all writes for effects that hold still;
+`mimarchy-lightd --fps 20` is the knob for the ones that do not.
+
 ### Except on the GPU, which is one LED
 
 The card exposes a single controllable LED for a bar with many physical
@@ -147,6 +158,12 @@ USB `5131:2007`, HID, reverse-engineered from a capture of the vendor app. A
 
 `usb.ids` mislabels the device as an "MSR-101U magnetic card reader"; the ID is
 cloned and also used by USB relay boards.
+
+Its hidraw node is opened through a logind `uaccess` ACL, not a group: Omarchy
+4 removes users from `input` (raw access to every keyboard), which is how the
+display silently went root-only after the first reboot following that
+migration. The rule runs the `uaccess` builtin itself because 73-seat-late.rules
+acts on the tag before a 99- rule has set it — see `udev/99-mimarchy.rules`.
 
 **There is no off command.** The panel lights because frames arrive and blanks on
 a firmware timeout once they stop, which is why the module exposes a run loop

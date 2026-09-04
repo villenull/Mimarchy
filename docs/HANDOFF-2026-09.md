@@ -1,5 +1,10 @@
 # Handoff — September 2026
 
+> **Resolved 2026-09-04.** The GPU came back after a PSU-off cold boot;
+> the marketplace approved and listed the plugin at `0528582`
+> (https://omarchyplugins.com/plugin.html?id=io.github.villenull.mimarchy);
+> the CPU question is answered in `docs/hardware-notes.md`. Kept as history.
+>
 > **Superseded in part on 2026-09-04.** The local session found that §4's
 > timeline is wrong — the card was already undetected at the Aug 30 boot,
 > a day before the restart blamed here — and that its LED controller is

@@ -5,7 +5,7 @@
   GPU-detection incident, a CPU/RAM question, and the owner's standing
   decisions about how much you may do on your own. Trust it as a starting
   point, verify it as a source.
-- **Tests** (285 as of version 0.4.3), from a venv built the way `install.sh` builds one:
+- **Tests** (293 as of version 0.4.4), from a venv built the way `install.sh` builds one:
   ```bash
   python3 -m venv /tmp/mv && /tmp/mv/bin/pip install --require-hashes -r requirements.lock \
     && /tmp/mv/bin/pip install --no-deps --no-build-isolation -e . \

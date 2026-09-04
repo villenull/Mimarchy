@@ -55,6 +55,18 @@ FPS = 30
 MISSING_ZONE_GRACE = 20.0
 MISSING_ZONE_POLL = 4.0
 
+#: How often a frame identical to the last one sent is re-sent anyway.
+#:
+#: Measured on the reference rig: `openrgb` costs about 4 % of one core while
+#: the card is driven at 30 fps and 0.3 % without the card, on the same
+#: effects — the I2C write to the card's controller is the expensive part,
+#: not the render. A one-LED zone under `static` was receiving the same colour
+#: thirty times a second. Sending only changes removes nearly all of that for
+#: the effects that hold still, at no visible cost; the periodic re-send is
+#: what keeps a dropped packet from leaving a zone on a stale colour forever,
+#: and is also what keeps `WriteFailureWatch` fed when nothing is changing.
+FRAME_REFRESH = 1.0
+
 #: How long every render write may fail continuously before the daemon exits.
 #: Long enough to ride out any transient — OpenRGB restarting under systemd
 #: takes a couple of seconds — and short enough that a dead server is noticed
@@ -97,6 +109,33 @@ class WriteFailureWatch:
         if self._failing_since is None:
             self._failing_since = t
         return (t - self._failing_since) >= self._window
+
+
+class FrameGate:
+    """Decides whether a rendered frame is worth sending to its zone.
+
+    A frame equal to the last one *successfully* sent to the same zone is
+    skipped until `refresh` seconds have passed since that send. Only
+    successful writes are remembered, so a dropped frame is retried on the
+    very next tick rather than assumed delivered; and `forget` exists for the
+    moment a zone is re-prepared for direct rendering, since the mode switch
+    can reset the controller's colours underneath us.
+    """
+
+    def __init__(self, refresh: float = FRAME_REFRESH):
+        self._refresh = refresh
+        self._sent: dict[str, tuple[tuple, float]] = {}
+
+    def should_send(self, key: str, frame, t: float) -> bool:
+        last = self._sent.get(key)
+        return (last is None or last[0] != tuple(frame)
+                or (t - last[1]) >= self._refresh)
+
+    def sent(self, key: str, frame, t: float) -> None:
+        self._sent[key] = (tuple(frame), t)
+
+    def forget(self, key: str) -> None:
+        self._sent.pop(key, None)
 
 
 def missing_zones(config: Config, detected: dict[str, int]) -> list[str]:
@@ -323,6 +362,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _stop)
 
     start = time.monotonic()
+    gate = FrameGate()
     rendered, firmware = plan(rgb, zones, state, 0.0)
     last_rotation = rotation(zones, state, 0.0)
     applied: dict[str, tuple] = {}
@@ -341,6 +381,7 @@ def main() -> None:
                 except Exception:  # noqa: BLE001 — retried on the next change
                     continue
                 applied[key] = ("render",)
+                gate.forget(key)
         for key, spec in firmware.items():
             if applied.get(key) == ("firmware", *spec):
                 continue
@@ -379,9 +420,12 @@ def main() -> None:
             frame = render(target.effect, t, count,
                            colour=tuple(target.colour), speed=target.speed,
                            seed=_seed(key))
+            if not gate.should_send(key, frame, t):
+                continue
             try:
                 rgb.write_frame(key, frame)
                 wrote += 1
+                gate.sent(key, frame, t)
             except Exception:  # noqa: BLE001 — a dropped frame is not fatal
                 failed += 1
 

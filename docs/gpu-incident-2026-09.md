@@ -141,3 +141,15 @@ list. In order:
 If the card is still absent after a genuine PSU-off cold boot, the kernel
 becomes the suspect again despite the clean changelog: boot `linux 7.1.8`
 from the Arch Linux Archive and repeat step 3.
+
+## Outcome (2026-09-04, afternoon)
+
+Diego cold-booted (PSU off). On the next boot `0x28` answers on bus 7,
+OpenRGB registers `Sapphire Radeon RX 9070 XT Nitro+` again, `mimarchy-setup
+--list` shows both devices, and `mimarchy-ctl status` carries no
+`NOT DETECTED` line. Hypothesis 1 — a wedged LED microcontroller that only a
+power cut resets — is confirmed; the kernel was never involved.
+
+For next time: the symptom is "card dark or frozen on one colour, `i2cdetect
+-y -r 7 0x28 0x28` shows `--`", and the fix is the PSU switch, not a reboot
+and not a reinstall.
