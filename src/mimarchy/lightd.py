@@ -67,6 +67,17 @@ MISSING_ZONE_POLL = 4.0
 #: and is also what keeps `WriteFailureWatch` fed when nothing is changing.
 FRAME_REFRESH = 1.0
 
+#: The most often a one-LED zone is written, whatever the render rate.
+#:
+#: The card's single controllable LED is the expensive zone: every write is
+#: an I2C transaction the amdgpu driver bit-bangs with busy-waits, about
+#: 1.5 ms of CPU each, so at 30 fps the card alone was 4–5 % of a core. A
+#: one-LED zone shows one flat colour, and a churn effect stepping that
+#: colour ten times a second is indistinguishable from thirty — there is no
+#: spatial motion to smooth. The strip keeps the full rate; it is USB and
+#: cheap, and its effects do move.
+ONE_LED_FPS = 10.0
+
 #: How long every render write may fail continuously before the daemon exits.
 #: Long enough to ride out any transient — OpenRGB restarting under systemd
 #: takes a couple of seconds — and short enough that a dead server is noticed
@@ -126,10 +137,18 @@ class FrameGate:
         self._refresh = refresh
         self._sent: dict[str, tuple[tuple, float]] = {}
 
-    def should_send(self, key: str, frame, t: float) -> bool:
+    def should_send(self, key: str, frame, t: float,
+                    min_interval: float = 0.0) -> bool:
+        """`min_interval` caps the zone's write rate: a changed frame that
+        arrives sooner than that after the last send waits for a later tick
+        (the colour it carries is superseded by then anyway)."""
         last = self._sent.get(key)
-        return (last is None or last[0] != tuple(frame)
-                or (t - last[1]) >= self._refresh)
+        if last is None:
+            return True
+        since = t - last[1]
+        if since < min_interval:
+            return False
+        return last[0] != tuple(frame) or since >= self._refresh
 
     def sent(self, key: str, frame, t: float) -> None:
         self._sent[key] = (tuple(frame), t)
@@ -420,7 +439,9 @@ def main() -> None:
             frame = render(target.effect, t, count,
                            colour=tuple(target.colour), speed=target.speed,
                            seed=_seed(key))
-            if not gate.should_send(key, frame, t):
+            if not gate.should_send(key, frame, t,
+                                    min_interval=(1.0 / ONE_LED_FPS
+                                                  if count == 1 else 0.0)):
                 continue
             try:
                 rgb.write_frame(key, frame)

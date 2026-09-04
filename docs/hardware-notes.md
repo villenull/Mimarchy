@@ -100,16 +100,28 @@ expected — and spectrum's instantaneous hues agree within 8 degrees.
 The cost is that lighting only animates while the daemon runs; stopping it
 freezes the LEDs on their last frame.
 
-**What the stream costs, measured.** `openrgb` sat at about 4 % of one core
-while the card was driven at 30 fps (4.4 s CPU in the first 106 s after a
-boot; 9 h 26 min over a working week in August) and at 0.3 % on the same
-effects with the card absent. The render is not the cost; the I2C write to
-the card's controller is. Its memory is 25–45 MB resident; the "8 % RAM" a
-system monitor shows is virtual address space from mapping the GPU. Since
-0.4.4 the daemon sends a frame only when it differs from the last one that
+**What the stream costs, measured.** The render is not the cost; the I2C
+write to the card's controller is. Each write is a transaction the amdgpu
+driver bit-bangs with busy-waits — about 1.5 ms of CPU in `openrgb` per
+write — while the board's USB writes are nearly free. Measured on the same
+effect (`unhinged`, every frame different) at 30 fps:
+
+| Configuration | `openrgb` CPU |
+|---|---|
+| board + card, every frame sent (≤ 0.4.3) | 5.1 % of one core |
+| board + card, unchanged frames skipped (0.4.4) | 3.5 % |
+| board only, card held static | 0.5 % |
+| board + card, card capped at 10 writes/s (0.4.5) | **1.2 %** |
+| board + card, `static` | 0.4 % |
+
+So the daemon sends a frame only when it differs from the last one that
 went out (re-sent once a second regardless, so a dropped packet cannot
-strand a zone), which removes nearly all writes for effects that hold still;
-`mimarchy-lightd --fps 20` is the knob for the ones that do not.
+strand a zone), and writes a one-LED zone at most ten times a second: one
+flat colour stepping at 10 Hz is indistinguishable from 30, since there is
+no spatial motion to smooth, and the strip keeps the full rate. Memory is
+25–45 MB resident; the "8 % RAM" a system monitor shows is virtual address
+space from mapping the GPU. `mimarchy-lightd --fps 20` remains available but
+no longer buys much.
 
 ### Except on the GPU, which is one LED
 

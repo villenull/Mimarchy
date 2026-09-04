@@ -68,3 +68,25 @@ def test_frames_compare_by_value_not_identity() -> None:
     g = FrameGate(refresh=1.0)
     g.sent("gpu", [(255, 0, 0)], 0.0)
     assert not g.should_send("gpu", [(255, 0, 0)], 0.5)
+
+
+def test_a_one_led_zone_is_rate_limited_even_when_the_colour_changes() -> None:
+    """The card's LED is the expensive write (an I2C transaction per frame),
+    and one flat colour stepping ten times a second looks the same as
+    thirty. Changed frames inside the interval wait for a later tick."""
+    g = FrameGate(refresh=1.0)
+    g.sent("gpu", RED, 0.0)
+    assert not g.should_send("gpu", BLUE, 1 / 30, min_interval=0.1)
+    assert not g.should_send("gpu", BLUE, 0.09, min_interval=0.1)
+    assert g.should_send("gpu", BLUE, 0.1, min_interval=0.1)
+
+
+def test_the_rate_limit_does_not_apply_to_the_strip() -> None:
+    g = FrameGate(refresh=1.0)
+    g.sent("cpu_fans", RED, 0.0)
+    assert g.should_send("cpu_fans", BLUE, 1 / 30, min_interval=0.0)
+
+
+def test_the_first_frame_ignores_the_interval() -> None:
+    g = FrameGate(refresh=1.0)
+    assert g.should_send("gpu", RED, 0.0, min_interval=0.1)

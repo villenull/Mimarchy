@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.villenull.mimarchy",
   "name": "Mimarchy",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "author": "Diego Huyke",
   "license": "MIT",
   "description": "ARGB lighting for CPU cooler fans and GPU and the cooler's built-in display — one icon and one panel.",
