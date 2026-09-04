@@ -317,6 +317,17 @@ hook; `~/.config/mimarchy`; the runtime state file;
 `/etc/udev/rules.d/99-mimarchy.rules`; the `openrgb` package (`pacman -Rns`)
 and `~/.config/OpenRGB`.
 
+**What actually happened on 2026-09-04:** the first attempt hung at the plugin
+step — `omarchy plugin remove` shows an interactive confirmation, and the
+`2>/dev/null` the previous session had put on that line hid it. Diego aborted
+with Ctrl+C (the backup, service stop/disable and unit removal had already
+completed) and finished with the corrected command below, which lets the
+prompt show and times the plugin command out after 60 s before deleting the
+folder directly. **Verify on arrival:** `omarchy plugin list` should not show
+the plugin, `systemctl --user list-unit-files | grep -E 'openrgb|mimarchy'`
+should be empty, `pacman -Qs openrgb` should be empty, and the backup tarball
+should exist. Redo any step that did not take.
+
 Left alone on purpose: any Mimarchy entry Diego merged into
 `~/.config/omarchy/extensions/omarchy-menu.jsonc`, and the optional
 `nct6687d` fan-RPM kernel module if he installed it (`pacman -Qs nct6687`).
@@ -334,7 +345,7 @@ rm -rf "$HOME/.config/systemd/user/openrgb.service.d"
 rm -f "$HOME"/.config/systemd/user/{openrgb,mimarchy-light,mimarchy-display}.service
 systemctl --user daemon-reload; systemctl --user reset-failed 2>/dev/null
 echo "==> removing the bar plugin"
-command -v omarchy >/dev/null && omarchy plugin remove io.github.villenull.mimarchy 2>/dev/null
+command -v omarchy >/dev/null && timeout --foreground 60 omarchy plugin remove io.github.villenull.mimarchy || echo "    (plugin command did not finish — removing its folder directly)"
 rm -rf "$HOME/.config/omarchy/plugins/io.github.villenull.mimarchy"
 echo "==> removing venv, launchers, theme hook, config and state"
 rm -rf "$HOME/.local/share/mimarchy" "$HOME/.config/mimarchy"
