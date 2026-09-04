@@ -317,13 +317,16 @@ hook; `~/.config/mimarchy`; the runtime state file;
 `/etc/udev/rules.d/99-mimarchy.rules`; the `openrgb` package (`pacman -Rns`)
 and `~/.config/OpenRGB`.
 
-**What actually happened on 2026-09-04:** the first attempt hung at the plugin
-step — `omarchy plugin remove` shows an interactive confirmation, and the
-`2>/dev/null` the previous session had put on that line hid it. Diego aborted
-with Ctrl+C (the backup, service stop/disable and unit removal had already
-completed) and finished with the corrected command below, which lets the
-prompt show and times the plugin command out after 60 s before deleting the
-folder directly. **Verify on arrival:** `omarchy plugin list` should not show
+**What actually happened on 2026-09-04:** the run paused for several minutes
+at the plugin step (`omarchy plugin remove` with its stderr hidden), then
+completed on its own: `pacman -Rns` removed **openrgb 1.0rc3-3** and its three
+orphaned dependencies (`qt5-base`, `qt5-translations`, `mbedtls3` — only
+OpenRGB needed them; `pacman -S openrgb` brings them back). Backup:
+`~/mimarchy-uninstall-backup-20260904-111320.tar.gz`. A second run of the
+corrected command below confirmed nothing was left ("plugin ... is not
+installed", "no package named openrgb"). Note the OpenRGB version: if
+`/var/log/pacman.log` shows an openrgb upgrade between Aug 30 and Aug 31,
+that is hypothesis 2 in §4.4. **Verify on arrival:** `omarchy plugin list` should not show
 the plugin, `systemctl --user list-unit-files | grep -E 'openrgb|mimarchy'`
 should be empty, `pacman -Qs openrgb` should be empty, and the backup tarball
 should exist. Redo any step that did not take.
