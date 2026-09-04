@@ -7,13 +7,20 @@
 # Without this, its /dev/hidraw node is root-only (crw------- root root) and
 # mimarchy cannot write display frames.
 #
-# TAG+="uaccess" is the tidier mechanism (session-scoped ACL, as the AURA
-# controller gets), but logind only applies that ACL on a real device-add, so
-# it does not take effect on `udevadm trigger` and left the node unreadable
-# here. GROUP/MODE applies immediately and unconditionally, so both are set:
-# uaccess for a clean boot-time path, group ownership as the one that reliably
-# works. `input` is used because the account is already a member; no new group
-# and no world-writable node.
+# Access is granted the way logind grants it for the AURA controller and the
+# I2C buses: a `uaccess` tag, which puts an ACL for the active seat's user on
+# the node — no group, no world-writable device, and it follows logins. The
+# catch is ordering. The tag is *acted on* by 73-seat-late.rules, which runs
+# the `uaccess` builtin for every device already tagged when it is evaluated;
+# a rule in 99- adds the tag after that has happened, so the tag was set and
+# nothing ever looked at it. This rule therefore runs the builtin itself.
+# (An earlier version of this comment blamed `udevadm trigger` for not
+# applying the ACL; the trigger was fine, the ordering was the problem.)
+#
+# GROUP="input" stays as a fallback for a machine where logind is not
+# managing the seat, but it is no longer what makes this work: Omarchy 4's
+# migration of 2026-09-03 removes users from `input` — membership is raw
+# access to every keyboard — so on Omarchy the group grants nothing.
 #
 # install.sh does not have root copy this file out of the checkout — it prints
 # a command with the rule spelled out inline, so what root writes is what the
@@ -21,4 +28,4 @@
 # runs. This copy documents the rule and anchors the sync check in
 # tests/test_install_inputs.py; the rule is one line so the two can be
 # compared byte for byte.
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="5131", ATTRS{idProduct}=="2007", TAG+="uaccess", GROUP="input", MODE="0660"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="5131", ATTRS{idProduct}=="2007", TAG+="uaccess", RUN{builtin}+="uaccess", GROUP="input", MODE="0660"

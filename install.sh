@@ -244,7 +244,7 @@ cat <<'EOF'
 
        printf '%s\n' \
          '# Mimarchy: cooler display (5131:2007) hidraw access; remove with the plugin.' \
-         'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="5131", ATTRS{idProduct}=="2007", TAG+="uaccess", GROUP="input", MODE="0660"' \
+         'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="5131", ATTRS{idProduct}=="2007", TAG+="uaccess", RUN{builtin}+="uaccess", GROUP="input", MODE="0660"' \
          | sudo tee /etc/udev/rules.d/99-mimarchy.rules >/dev/null
        sudo udevadm control --reload-rules
        sudo udevadm trigger --action=add --subsystem-match=hidraw

@@ -98,6 +98,24 @@ def test_printed_udev_rule_matches_the_reference_file():
     assert reference == [printed.group(1)]
 
 
+def test_udev_rule_applies_its_own_uaccess_acl():
+    """The rule must grant access through logind's ACL, not through a group.
+
+    Omarchy 4 removes users from `input` (its migration of 2026-09-03: the
+    group is raw access to every keyboard), so GROUP="input" grants nothing
+    there. The `uaccess` tag is what works — but only if this rule runs the
+    builtin itself: 73-seat-late.rules acts on the tag before a 99- rule has
+    set it, which is how the display stayed root-only for a whole session
+    with the tag present and nobody the wiser.
+    """
+    reference = [line for line in (REPO / "udev" / "99-mimarchy.rules").read_text().splitlines()
+                 if line and not line.startswith("#")]
+    (rule,) = reference
+    assert 'TAG+="uaccess"' in rule
+    assert 'RUN{builtin}+="uaccess"' in rule, "the tag alone is set too late to be acted on"
+    assert 'MODE="0666"' not in rule and 'MODE="0777"' not in rule
+
+
 def test_no_privileged_step_reads_the_checkout():
     """The reviewed commit cannot vouch for a file root reads out of a
     user-writable directory at some later elevation time."""
