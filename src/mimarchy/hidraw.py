@@ -100,6 +100,19 @@ class HidDevice:
             ) from exc
         self._path = path
 
+    def write(self, data: bytes) -> None:
+        """One 65-byte report, first byte included, written verbatim.
+
+        hidapi's `hid_write` does exactly this underneath — a plain write()
+        of the whole report to the hidraw node — so this takes the same
+        bytes: the report id first, then payload.
+        """
+        try:
+            os.write(self._fd, data)
+        except OSError as exc:
+            raise HidError(f"write to {self._path} failed: {exc}") from exc
+
+
     def read(self, size: int = REPORT_LEN,
              timeout: float = READ_TIMEOUT) -> bytes:
         try:

@@ -165,3 +165,26 @@ def test_aura_offsets_match_openrgb() -> None:
     )
     assert aura.LEDS_PER_PACKET == 0x14  # AsusAuraUSBController.h
     assert aura.MAX_ADDRESSABLE == 120  # RGBAura.h AURA_ADDRESSABLE_MAX_LEDS
+
+
+def test_hid_device_writes_report_verbatim(tmp_path: Path, monkeypatch) -> None:
+    """What `HidDevice.write` hands to the kernel is the whole 65-byte report.
+
+    The regression this pins: `write` was lost in the hidraw rewrite while
+    `aura` and `display` kept calling it, so the board was undetectable with
+    an AttributeError instead of a permission hint. A fake fd keeps this off
+    hardware.
+    """
+    import os
+
+    written: list[bytes] = []
+    monkeypatch.setattr(os, "open", lambda *a, **k: 99)
+    monkeypatch.setattr(os, "write",
+                        lambda fd, data: written.append(bytes(data)) or len(data))
+    monkeypatch.setattr(os, "close", lambda fd: None)
+
+    dev = hidraw.HidDevice("/dev/hidraw9")
+    dev.write(aura._packet(0xEC, 0xB0))
+    assert len(written) == 1
+    assert len(written[0]) == 65
+    assert written[0][:2] == bytes((0xEC, 0xB0))
