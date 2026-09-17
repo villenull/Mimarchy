@@ -30,13 +30,15 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 
 from mimarchy import detection, lightstate
 from mimarchy.config import load_config
 from mimarchy.effects import COLOUR_EFFECTS, EFFECTS, SPEED_LEVELS, nearest_speed
 from mimarchy.hwmon import (read_cpu_fan_rpm, read_cpu_temp, read_gpu_temp,
                             snapshot)
-from mimarchy.service import DISPLAY_UNIT, LIGHT_UNIT, set_unit, unit_active
+from mimarchy.service import (daemon_alive, daemon_script, read_note, spawn_daemon,
+                              stop_daemon)
 from mimarchy.theme import LED_ROLES, led_colour
 
 #: Effects that ignore the speed ladder entirely. Asking for a speed change on
@@ -121,11 +123,11 @@ def cmd_status(args: argparse.Namespace) -> int:
     # panel is open — from inside the user's long-lived shell process.
     sensors = snapshot()
 
-    # Detection state is the daemon's report of what OpenRGB actually
-    # produced for each configured zone, not what the state file wishes for.
-    # Without it `gpu: rainbow` + `lighting: running` was the whole story of
-    # a card that had not been detected for a week. None until the daemon
-    # has started this login — "unknown" is the honest answer then, not "ok".
+    # Detection state is the daemon's report of which controllers answered for
+    # each configured zone, not what the state file wishes for. Without it
+    # `gpu: rainbow` + `lighting: running` was the whole story of a card that
+    # had not answered for a week. None until the daemon has started this
+    # login — "unknown" is the honest answer then, not "ok".
     report = detection.load()
     zones = None if report is None else {
         key: {"detected": zone.detected,
@@ -138,8 +140,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     payload = {
         "linked": state.linked,
         "targets": targets,
-        "lighting_active": unit_active(LIGHT_UNIT),
-        "display_active": unit_active(DISPLAY_UNIT),
+        "lighting_active": daemon_alive("lightd"),
+        "display_active": daemon_alive("displayd"),
+        "daemon_note": read_note("lightd"),
         "zones": zones,
         "missing_zones": [] if report is None else report.missing,
         "speed_stops": len(SPEED_LEVELS),
@@ -171,7 +174,7 @@ def _human_status(payload: dict) -> str:
     # it, named, next to the state that was pretending otherwise.
     for key in payload.get("missing_zones") or ():
         zone = (payload.get("zones") or {}).get(key) or {}
-        lines.append(f"{key}: NOT DETECTED — no OpenRGB device matching "
+        lines.append(f"{key}: NOT DETECTED — no hidraw node or I2C bus answered for "
                      f"{zone.get('configured_device', '?')!r}")
     lines.append(f"display:  {'on' if payload['display_active'] else 'off'}")
 
@@ -244,16 +247,34 @@ def cmd_effect(args: argparse.Namespace) -> int:
 
 
 def cmd_display(args: argparse.Namespace) -> int:
-    active = unit_active(DISPLAY_UNIT)
+    active = daemon_alive("displayd")
     wanted = {"on": True, "off": False, "toggle": not active}[args.action]
 
     if wanted == active:
         return 0
 
-    error = set_unit(DISPLAY_UNIT, wanted)
-    if error:
-        print(error, file=sys.stderr)
+    if not wanted:
+        error = stop_daemon("displayd")
+        if error:
+            print(error, file=sys.stderr)
+            return 1
+        return 0
+
+    # Starting means spawning the launcher next to this checkout, then
+    # waiting for it to claim its pidfile — the claim is the acknowledgement
+    # that it is actually up, not just forked.
+    try:
+        spawn_daemon(daemon_script("displayd"))
+    except OSError as exc:
+        print(f"could not start the display stream: {exc}", file=sys.stderr)
         return 1
+    deadline = time.monotonic() + 2.0
+    while not daemon_alive("displayd"):
+        if time.monotonic() >= deadline:
+            note = read_note("displayd")
+            print(note or "the display stream did not start.", file=sys.stderr)
+            return 1
+        time.sleep(0.05)
     return 0
 
 

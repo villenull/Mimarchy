@@ -111,17 +111,15 @@ class TestZoneLengths:
         assert config.leds_for("nobody") == 8
 
 
-class TestDetectorList:
-    def test_it_is_absent_unless_the_file_sets_one(self, tmp_path):
-        """Absent means "work it out from the device names"; the restrict tool
-        depends on being able to tell that from an explicit empty list."""
-        assert load_config(write(tmp_path, "[rgb]\n")).detectors == []
-
-    def test_it_is_read_verbatim(self, tmp_path):
+class TestLegacyDetectorKey:
+    def test_a_legacy_detectors_key_is_ignored_not_fatal(self, tmp_path):
+        """Pre-0.5.0 files carry a detector allowlist; the loader must keep
+        accepting them rather than choke on the unknown key."""
         config = load_config(write(
             tmp_path, '[rgb]\ndetectors = ["ASUS Aura Core", "Other"]\n'))
 
-        assert config.detectors == ["ASUS Aura Core", "Other"]
+        assert set(config.zones) == set()
+        assert config.zone_size == 15
 
 
 class TestTheShippedDefault:
@@ -141,10 +139,9 @@ class TestTheShippedDefault:
         assert raw["rgb"]["zone_size"] == 15
         assert raw["display"]["vendor_id"] == 0x5131
         assert set(raw["rgb"]["zones"]) == {"cpu_fans", "gpu"}
-        # Spelled out rather than derived, because "Sapphire" names every
-        # Sapphire card OpenRGB knows — fine for finding a device, a freeze
-        # risk for picking detectors.
-        assert len(raw["rgb"]["detectors"]) == 4
+        # Controllers are opened directly now — there is no detector
+        # allowlist to document, so none may ship.
+        assert "detectors" not in raw["rgb"]
 
     def test_the_link_toggle_rewrites_one_line_and_keeps_the_comments(
             self, tmp_path):

@@ -1,4 +1,4 @@
-"""The daemon notices a configured zone that OpenRGB did not produce.
+"""The daemon notices a configured zone no controller answered for.
 
 Before this, `lightd` took whatever device list it saw at startup as the
 truth for the rest of its life and never said a word about a zone that was
@@ -7,11 +7,11 @@ therefore went unnoticed for a week: the state file still said `gpu:
 rainbow`, the unit was green, and the card was dark.
 
 Three things are pinned here. The startup check names exactly the configured
-zones that are missing, in config order. The grace window keeps re-asking
-OpenRGB — because its SDK listener opens before detection has finished, an
-early connect can miss a slow controller that turns up seconds later — but
-gives up after a bounded time and runs with what it found. And the report
-written for `mimarchy-ctl status` says which zones were and were not found.
+zones that are missing, in config order. The grace window keeps re-opening
+the controllers — because a device still enumerating at login answers a later
+open though it missed the first — but gives up after a bounded time and runs
+with what it found. And the report written for `mimarchy-ctl status` says
+which zones were and were not found.
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ def test_the_message_says_what_was_looked_for() -> None:
 
 
 def test_a_late_controller_is_picked_up_within_the_grace_window() -> None:
-    """OpenRGB answered before its detection pass had reached the card."""
+    """A controller still enumerating at login answers a later open."""
     looks = iter([FakeRGB([BOARD]), FakeRGB([BOARD]), FakeRGB([BOARD, CARD])])
     clock = FakeClock()
     rgb, zones, missing = settle_zones(_config(), lambda: next(looks),

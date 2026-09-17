@@ -5,21 +5,28 @@
   GPU-detection incident, a CPU/RAM question, and the owner's standing
   decisions about how much you may do on your own. Trust it as a starting
   point, verify it as a source.
-- **Tests** (296 as of version 0.4.5), from a venv built the way `install.sh` builds one:
+- **Tests** (count as of version 0.6.0), from a scratch venv outside the
+  checkout (a plugin folder may contain no symlinks, so a venv inside it
+  would fail `omarchy plugin validate`):
   ```bash
-  python3 -m venv /tmp/mv && /tmp/mv/bin/pip install --require-hashes -r requirements.lock \
-    && /tmp/mv/bin/pip install --no-deps --no-build-isolation -e . \
-    && /tmp/mv/bin/pip install "pytest>=9.1.1,<10" "pytest-asyncio>=1.4.0,<2" \
+  /usr/bin/python3 -m venv /tmp/mv && /tmp/mv/bin/pip install -e ".[dev]" \
     && /tmp/mv/bin/python -m pytest -q
   ```
-- **Hazards.** OpenRGB's broad detection pass (every detector enabled — its
-  first run, `--discover`, or a rewritten config after opening the OpenRGB
-  GUI) can hard-freeze this hardware (OpenRGB issue 4888); `install.sh`
-  must never run it and the tests enforce that. The marketplace review is
-  bound to exact commits on `main`; do not move `main` mid-review without a
-  reason. `openrgb.service` binds the SDK server to `127.0.0.1` on purpose.
+- **Hazards.** Both controllers are driven directly (hidraw for the board,
+  I2C for the card), so there is no detector list, no SDK server, and no
+  broad-detection freeze hazard. The remaining privileged surface is one
+  udev rule for the two hidraw nodes (printed inline by the README, never
+  copied out of the checkout by root) plus the out-of-tree `nct6687d` fan
+  driver. Daemons are panel-supervised with pidfile singletons, not
+  systemd units. The marketplace review is bound to exact commits on
+  `main`; do not move `main` mid-review without a reason.
+- **Install is plugin-add only.** `omarchy plugin add
+  https://github.com/villenull/mimarchy --enable` is the whole install;
+  there is no installer script, no venv, no systemd unit. `bin/` holds real
+  stdlib-only launchers (`mimarchy-ctl`, `mimarchy-lightd`,
+  `mimarchy-displayd`, `mimarchy-setup`) that the panel spawns via
+  `/usr/bin/python3`.
 - **Conventions.** Comments explain *why*, in prose; every agreement that
   spans files gets a test (`tests/test_install_inputs.py`,
   `tests/test_manifest.py`); `manifest.json` and `pyproject.toml` versions
-  move together; the venv lives outside the checkout because a plugin
-  folder may contain no symlinks.
+  move together.

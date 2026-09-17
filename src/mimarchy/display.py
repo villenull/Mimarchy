@@ -36,7 +36,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-import hid
+from mimarchy import hidraw
 
 from mimarchy.config import DisplayConfig
 
@@ -96,7 +96,7 @@ class CPUDisplay:
 
     def __init__(self, config: DisplayConfig):
         self._config = config
-        self._device: hid.Device | None = None
+        self._device: hidraw.HidDevice | None = None
 
     def _require_configured(self) -> None:
         if not self._config.known:
@@ -107,9 +107,14 @@ class CPUDisplay:
     def open(self) -> None:
         self._require_configured()
         if self._device is None:
-            self._device = hid.Device(
-                self._config.vendor_id, self._config.product_id
-            )
+            nodes = hidraw.find(self._config.vendor_id,
+                                self._config.product_id)
+            if not nodes:
+                raise ProtocolUnknownError(
+                    f"Cooler display {self._config.vendor_id:#06x}:"
+                    f"{self._config.product_id:#06x} not found on any hidraw node."
+                )
+            self._device = hidraw.HidDevice(nodes[0].path)
 
     def close(self) -> None:
         if self._device is not None:
@@ -119,8 +124,8 @@ class CPUDisplay:
     def send(self, frame: DisplayFrame) -> None:
         self.open()
         assert self._device is not None
-        # hidapi prepends a report ID byte; this device uses no numbered
-        # reports, so it must be 0 and is not part of the 64-byte frame.
+        # hidraw takes the report bytes verbatim; this device uses no numbered
+        # reports, so the leading byte is 0 and is not part of the 64-byte frame.
         self._device.write(b"\x00" + frame.encode())
 
     def __enter__(self) -> "CPUDisplay":

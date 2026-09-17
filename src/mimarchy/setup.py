@@ -1,33 +1,22 @@
 """`mimarchy-setup` — point Mimarchy at whatever LEDs this machine actually has.
 
-`config.toml` has always accepted arbitrary hardware: `device` is a substring of
-the OpenRGB device name and `zone` is an index into it, so a different board and
-a different card were only ever a text edit away. The problem was finding out
-what to type. `openrgb --list-devices` prints the names, the comments in the
-config explain the fields, and between those two the user is expected to work out
-that an addressable zone reporting `leds=0` is normal, that the number they want
-is the physical length of their strip, and which of five zones on a motherboard
-is the header their cooler is plugged into. That is a lot of reading before
-anything lights up, and it is the step that turns "works on my rig" into "works
-on yours".
+`config.toml` accepts arbitrary hardware: each zone names a controller channel,
+so a different board and a different card are only ever a text edit away. The
+problem is finding out what to type. This probes the two controllers directly,
+prints what is there, asks which zones to drive and how long each strip is,
+and writes the file.
 
-So this connects to the same SDK server the daemon uses, prints what is there,
-asks which zones to drive and how long each strip is, and writes the file.
+Two things it deliberately does *not* do:
 
-Three things it deliberately does *not* do:
-
-* **Touch hardware.** It reads the device list and writes a text file. Nothing
-  is resized, no mode is set, no colour is sent — running it while the lighting
-  daemon is animating is safe and changes nothing until the daemon next reloads.
-* **Restrict detectors.** It works out which OpenRGB detectors the selected
-  devices need and writes them into the config, but narrowing the list is
-  `tools/restrict-openrgb-detectors.py`'s job and stays a separate, explicit
-  step — see `mimarchy.detectors` for why that separation matters.
+* **Touch LEDs.** It reads the Aura config table and probes the Nitro address
+  for presence. No mode is set, no colour is sent — running it while the
+  lighting daemon is animating is safe and changes nothing until the daemon
+  next reloads.
 * **Ask about the cooler display.** That driver is specific to one USB panel
   (`5131:2007`) and there is nothing to discover: either the device is present
   or it is not.
 
-    mimarchy-setup --list      # what OpenRGB sees, changes nothing
+    mimarchy-setup --list      # what the controllers report, changes nothing
     mimarchy-setup             # the wizard
 """
 
@@ -40,11 +29,12 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from openrgb.utils import ZoneType
-
-from mimarchy import detectors as detectors_mod
+from mimarchy import aura as aura_mod
+from mimarchy import hidraw
+from mimarchy import nitro as nitro_mod
+from mimarchy import smbus
 from mimarchy.config import CONFIG_PATH, Config, load_config
-from mimarchy.rgb import RGBError, connect
+from mimarchy.rgb import RGBError
 
 #: Names that make the CPU/GPU link work without the user knowing it exists.
 #: Linking joins every configured zone (see `lightd._source_target`), so it works
@@ -101,40 +91,58 @@ class Abort(RuntimeError):
 # ---- reading what is there ------------------------------------------------
 
 
-def _addressable(device, index: int, zone) -> bool:
-    """Whether this zone's length is ours to set.
+def describe_aura(board) -> DetectedDevice | None:
+    """The board's channels as one device, or None when no board answered."""
+    if board is None:
+        return None
+    return DetectedDevice(
+        index=0,
+        name="ASUS Aura USB",
+        kind="motherboard",
+        zones=[
+            DetectedZone(index=ch.index, name=ch.name,
+                         leds=0 if ch.addressable else 1,
+                         addressable=ch.addressable)
+            for ch in board.channels
+        ],
+    )
 
-    `leds_min != leds_max` is the authority — it is what OpenRGB itself checks
-    before honouring a resize — but the SDK wrapper only carries it on the raw
-    `ControllerData`, not on the `Zone` object, and older servers do not send it
-    at all. The zone type is the fallback: SINGLE is a fixed lamp, LINEAR and
-    MATRIX are strips and panels.
+
+def describe_nitro(present: bool) -> DetectedDevice | None:
+    """The card's bar as one fixed zone, or None when nothing answered."""
+    if not present:
+        return None
+    return DetectedDevice(
+        index=0,
+        name="Sapphire Nitro Glow",
+        kind="gpu",
+        zones=[DetectedZone(index=0, name="GPU Bar", leds=1,
+                            addressable=False)],
+    )
+
+
+def probe() -> list[DetectedDevice]:
+    """Every controller that answered, without touching any LEDs.
+
+    The Aura config-table read and the single-byte Nitro presence probe are
+    reads only; neither changes a mode nor sends a colour.
     """
-    zone_data = getattr(getattr(device, "data", None), "zones", None)
-    if zone_data is not None and index < len(zone_data):
-        low = getattr(zone_data[index], "leds_min", None)
-        high = getattr(zone_data[index], "leds_max", None)
-        if low is not None and high is not None:
-            return low != high
-    return getattr(zone, "type", ZoneType.SINGLE) != ZoneType.SINGLE
-
-
-def describe(client) -> list[DetectedDevice]:
-    """The device tree, flattened into something printable and testable."""
-    devices = []
-    for index, device in enumerate(client.devices):
-        kind = getattr(getattr(device, "type", None), "name", "") or "unknown"
-        devices.append(DetectedDevice(
-            index=index,
-            name=device.name,
-            kind=kind.lower(),
-            zones=[
-                DetectedZone(index=z_index, name=zone.name,
-                             leds=len(zone.leds),
-                             addressable=_addressable(device, z_index, zone))
-                for z_index, zone in enumerate(device.zones)
-            ],
-        ))
+    try:
+        board = aura_mod.AuraBoard.open()
+    except hidraw.HidError:
+        board = None
+    try:
+        aura_dev = describe_aura(board) if board is not None else None
+    finally:
+        if board is not None:
+            try:
+                board.close()
+            except Exception:  # noqa: BLE001 - close is best-effort
+                pass
+    present = nitro_mod.find() is not None
+    devices = [d for d in (aura_dev, describe_nitro(present)) if d is not None]
+    for i, device in enumerate(devices):
+        device.index = i
     return devices
 
 
@@ -160,35 +168,33 @@ def format_listing(devices: list[DetectedDevice]) -> str:
         lines.append("")
 
     if any(z.addressable and z.leds == 0 for d in devices for z in d.zones):
-        lines.append("An addressable zone showing 0 LEDs is normal: OpenRGB has "
-                     "no way to know how")
-        lines.append("long a strip is until it is told. That is what the wizard "
-                     "asks you for.")
+        lines.append("An addressable zone showing 0 LEDs is normal: a strip shows "
+                     "whatever frames")
+        lines.append("arrive, so its length comes from your config. That is what "
+                     "the wizard asks you for.")
     return "\n".join(lines).rstrip() + "\n"
 
 
-#: Printed when the server answers but reports nothing. Almost always the
-#: detector list rather than the cabling: `install.sh` narrows it *before* the
-#: server first starts, because an unrestricted probe is a boot-time freeze on
-#: some cards (OpenRGB #4888) — which leaves a machine whose hardware was never
-#: in that narrow set seeing no devices at all. So the fix is spelled out here
-#: rather than left as "check your connections".
+#: Printed when no controller answered. The two causes are permissions and
+#: cabling/power, not software: the Aura hidraw node is root-only until the
+#: udev rule lands, and a card whose microcontroller has dropped off its I2C
+#: bus needs a cold boot rather than any command.
 _NO_DEVICES = """\
-OpenRGB is running but reports no devices.
+No lighting controllers answered.
 
-If Mimarchy has just been installed, this is expected rather than broken: the
-detector list was narrowed before the OpenRGB server was first started, and
-your hardware is not in the set it was narrowed to. Widening it once is how you
-find out what you have:
+Two things to check, in this order:
 
-    tools/restrict-openrgb-detectors.py --discover
-    systemctl --user restart openrgb.service
-    mimarchy-setup
-    tools/restrict-openrgb-detectors.py
-    systemctl --user restart openrgb.service
+* Permissions — the Aura board speaks over a hidraw node that is root-only
+  until the udev rule is installed:
 
-Read what `--discover` prints before running it — a full probe is the thing
-that can hang a machine, and that is the reason for this dance.
+    sudo cp udev/99-mimarchy.rules /etc/udev/rules.d/
+    sudo udevadm control --reload-rules && sudo udevadm trigger
+
+  Then unplug and re-plug the board's USB, or reboot.
+
+* Power — if the card's bar went dark suddenly, its microcontroller has
+  likely dropped off the I2C bus. A cold boot (power off at the PSU,
+  wait ~30 s) resets it.
 """
 
 
@@ -252,8 +258,7 @@ def prompt_zones(devices: list[DetectedDevice], ask, out=print) -> list[Selectio
         leds = None
         if zone.addressable:
             # Only for zones whose length is ours to set. Asking about a
-            # one-LED GPU zone invites an answer that cannot be honoured, and a
-            # rejected resize is silent.
+            # one-LED card zone invites an answer that cannot be honoured.
             leds = _ask_int(ask, out,
                             f"  how many LEDs on this strip [{DEFAULT_LEDS}]: ",
                             DEFAULT_LEDS)
@@ -293,7 +298,7 @@ def _toml_string(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def render_config(selections: list[Selection], detector_names: list[str],
+def render_config(selections: list[Selection],
                   existing: Config | None = None) -> str:
     """The whole `config.toml`, comments and all.
 
@@ -322,9 +327,8 @@ def render_config(selections: list[Selection], detector_names: list[str],
         "",
         "[rgb]",
         "# Default length for addressable zones that do not set their own `leds`",
-        "# below. Addressable zones report leds=0 until told, and a zero-length "
-        "zone",
-        "# silently swallows colour writes.",
+        "# below. A strip shows whatever frames arrive, so its length is the",
+        "# config's job, and a zero-length zone is skipped.",
         "#",
         "# Too short leaves the tail of the strip dark; too long is worse than it",
         "# sounds, because spatial effects span the *zone* — at 60 on a 15-LED "
@@ -335,39 +339,10 @@ def render_config(selections: list[Selection], detector_names: list[str],
     ]
 
     lines += [
-        "# The OpenRGB detectors these devices need, and the only ones",
-        "# `tools/restrict-openrgb-detectors.py` will enable. Everything else "
-        "stays off:",
-        "# OpenRGB's broad GPU/I2C probing is a documented total-system freeze",
-        "# (OpenRGB #4888) and its server starts at login, so a wide list is a "
-        "freeze",
-        "# on every boot rather than a one-off.",
-    ]
-    if detector_names:
-        lines.append("detectors = [")
-        lines += [f"    {_toml_string(name)}," for name in detector_names]
-        lines.append("]")
-    else:
-        # An empty list is not the same as an absent key, and the difference
-        # matters: absent means "work it out from the device names", empty means
-        # "we tried and could not", which is a question for a person.
-        lines += [
-            "#",
-            "# Nothing here: the device names below did not resemble any "
-            "detector OpenRGB",
-            "# knows. Run `tools/restrict-openrgb-detectors.py --check` to see "
-            "the names,",
-            "# then list the ones matching your hardware here.",
-            "detectors = []",
-        ]
-    lines.append("")
-
-    lines += [
-        "# The zones to drive. `device` is matched as a case-insensitive "
-        "substring of",
-        "# the OpenRGB device name, so it survives minor naming changes; `zone` "
-        "is the",
-        "# index within that device. `leds` overrides `zone_size` for one zone.",
+        "# The zones to drive. `device` names the controller for a person "
+        "reading this",
+        "# file; `zone` is the channel index within it — `mimarchy-setup --list`",
+        "# prints both. `leds` overrides `zone_size` for one zone.",
         "#",
         "# Add as many as you have — the daemon renders every zone listed here.",
     ]
@@ -406,9 +381,9 @@ def render_config(selections: list[Selection], detector_names: list[str],
 def write_config(text: str, path: Path) -> Path | None:
     """Write the config, keeping any previous version. Returns the backup path.
 
-    Same timestamped-backup convention as the detector tool, for the same
-    reason: this file is documented as hand-editable, so overwriting it without
-    a copy would throw away comments and values someone deliberately put there.
+    Same timestamped-backup convention as ever, for the same reason: this file
+    is documented as hand-editable, so overwriting it without a copy would
+    throw away comments and values someone deliberately put there.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     backup = None
@@ -422,40 +397,13 @@ def write_config(text: str, path: Path) -> Path | None:
 # ---- commands -------------------------------------------------------------
 
 
-def _detectors_for(selections: list[Selection], openrgb_config: Path,
-                   out) -> list[str]:
-    """Which detectors the selected devices need, or nothing if unknowable.
-
-    Best effort by design. A missing or unreadable OpenRGB config is not a
-    reason to refuse to write a lighting config — the zones are the part the
-    user came for, and the detector list has its own tool with its own
-    `--check`.
-    """
-    try:
-        known = detectors_mod.read_detector_names(openrgb_config)
-    except detectors_mod.DetectorConfigError as exc:
-        out(f"note: {exc}")
-        out("      the detector allowlist was left out; run "
-            "tools/restrict-openrgb-detectors.py later.")
-        return []
-
-    names: set[str] = set()
-    for match in detectors_mod.resolve([s.device for s in selections], known):
-        if match.note:
-            out(f"note: {match.device!r} — {match.note}")
-        names |= match.detectors
-    return sorted(names)
-
-
 def cmd_list(args: argparse.Namespace) -> int:
-    client = connect(args.host, args.port, name="mimarchy-setup")
-    print(format_listing(describe(client)), end="")
+    print(format_listing(probe()), end="")
     return 0
 
 
 def cmd_setup(args: argparse.Namespace, ask) -> int:
-    client = connect(args.host, args.port, name="mimarchy-setup")
-    devices = describe(client)
+    devices = probe()
     print(format_listing(devices), end="")
     if not devices:
         return 1
@@ -466,9 +414,7 @@ def cmd_setup(args: argparse.Namespace, ask) -> int:
         print("No zones chosen — config.toml left alone.")
         return 1
 
-    detector_names = _detectors_for(selections, args.openrgb_config, print)
-    text = render_config(selections, detector_names,
-                         existing=_existing(args.config))
+    text = render_config(selections, existing=_existing(args.config))
     backup = write_config(text, args.config)
 
     print(f"\nwrote {args.config}")
@@ -478,11 +424,9 @@ def cmd_setup(args: argparse.Namespace, ask) -> int:
         print(f"  {selection.key}: {selection.device!r} zone {selection.zone}"
               + (f", {selection.leds} LEDs" if selection.leds else ""))
 
-    print("\nNext, narrow OpenRGB's detector list to what you just picked and "
-          "restart it:")
-    print("    tools/restrict-openrgb-detectors.py")
-    print("    systemctl --user restart openrgb.service "
-          "mimarchy-light.service")
+    print("\nWrote the config. The panel starts the lighting daemon itself, so")
+    print("it picks the new zones up on its next status poll; a headless")
+    print("mimarchy-lightd needs a restart to re-read the file.")
     return 0
 
 
@@ -512,11 +456,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help="print the detected devices and zones, and exit")
     parser.add_argument("--config", type=Path, default=CONFIG_PATH,
                         help=f"config file to write (default: {CONFIG_PATH})")
-    parser.add_argument("--openrgb-config", type=Path,
-                        default=detectors_mod.DEFAULT_OPENRGB_CONFIG,
-                        help="OpenRGB's config, read for its detector names")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=6742)
     return parser
 
 
@@ -530,7 +469,7 @@ def main(argv: list[str] | None = None, ask=input) -> int:
 
     try:
         return cmd_list(args) if args.list else cmd_setup(args, ask)
-    except RGBError as exc:
+    except (RGBError, hidraw.HidError, smbus.I2cError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     except Abort as exc:

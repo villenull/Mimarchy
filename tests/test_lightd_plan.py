@@ -2,8 +2,8 @@
 
 This is the decision the `[firmware]` tag in the TUI reports on, and it is easy to
 get subtly wrong because the interesting cases are combinations: one-LED zone,
-spatial effect, linked or not. A fake controller stands in for OpenRGB so the rule
-can be exercised without hardware.
+spatial effect, linked or not. A fake of the facade's own API stands in for the
+drivers so the rule can be exercised without hardware.
 """
 
 from __future__ import annotations

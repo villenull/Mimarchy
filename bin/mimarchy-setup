@@ -1,0 +1,15 @@
+#!/usr/bin/python3
+"""Run mimarchy-setup from this checkout without installing anything.
+
+Resolves its own real path to find ../src, so first-run hardware setup uses
+the backend in this repo.
+"""
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+from mimarchy.setup import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())

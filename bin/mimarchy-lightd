@@ -1,0 +1,15 @@
+#!/usr/bin/python3
+"""Run mimarchy-lightd from this checkout without installing anything.
+
+Resolves its own real path to find ../src, so the QML panel owns the daemon
+lifecycle from the backend in this repo.
+"""
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+from mimarchy.lightd import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())

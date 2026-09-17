@@ -1,4 +1,4 @@
-"""User-editable device identifiers and OpenRGB zone mapping (fallback path)."""
+"""User-editable device identifiers and zone mapping."""
 
 from __future__ import annotations
 
@@ -16,38 +16,24 @@ DEFAULT_CONFIG = """\
 # Mimarchy config. Hand-editable, and meant to be read as well as edited — the
 # comments are why each value is what it is.
 #
-# `mimarchy-setup` writes this file for you from what OpenRGB actually detects,
-# which is easier than guessing device names. `mimarchy-setup --list` prints the
-# devices and zones without changing anything.
+# `mimarchy-setup` writes this file for you from the controllers it finds,
+# which is easier than guessing device names. `mimarchy-setup --list` prints
+# the channels and zones without changing anything.
 
 [rgb]
-# Default length for addressable zones that do not set their own `leds` below.
-# Set this to your strip's real length: addressable zones report leds=0 until
-# told, and a zero-length zone silently swallows colour writes.
+# Default length for addressable strips that do not set their own `leds` below.
+# Set this to your strip's real length: a strip shows whatever frames arrive,
+# so the render length is the config's job, and a zero-length zone is skipped.
 #
 # Getting it wrong is visible either way. Too short leaves the tail dark; too long
 # is worse than it sounds, because spatial effects span the *zone* — at 60 on a
 # 15-LED strip, rainbow shows a quarter of the hue wheel and looks like spectrum.
 zone_size = 15
 
-# Which OpenRGB detectors `tools/restrict-openrgb-detectors.py` may enable.
-# Optional: without it the tool works the list out from the device names below.
-# It is spelled out here because "Sapphire" is a fine way to *find* one card and
-# a hopeless way to *pick* a detector — it names every Sapphire card OpenRGB
-# knows, which would mean dozens of I2C probes, which is the freeze this whole
-# dance exists to avoid (OpenRGB #4888).
-#
-# These four are this machine's; `mimarchy-setup` replaces them with yours.
-detectors = [
-    "ASUS Aura Addressable",
-    "ASUS Aura Core",
-    "ASUS Aura Motherboard",
-    "Sapphire Radeon RX 9070 XT Nitro+",
-]
-
-# The zones to drive. `device` is matched as a case-insensitive substring of the
-# OpenRGB device name, so it survives minor naming changes; `zone` is the index
-# within that device. Run `openrgb --list-devices` to see yours.
+# The zones to drive. `cpu_fans` is an Aura channel on the motherboard
+# (see mimarchy/aura.py); `gpu` is the Nitro card's bar (see mimarchy/nitro.py).
+# `device` is kept for display and matching, `zone` is the channel index within
+# that controller. Run `mimarchy-setup --list` to see yours.
 #
 # Add as many as you have: the daemon renders every zone listed here, and the
 # names are yours to choose. Only list zones you have something plugged into —
@@ -56,11 +42,11 @@ detectors = [
 # `leds` overrides `zone_size` for one zone, which is what two strips of
 # different lengths need.
 [rgb.zones.cpu_fans]
-device = "PRIME X870-P"
+device = "Aura Addressable 1"
 zone = 0
 
 [rgb.zones.gpu]
-device = "Sapphire"
+device = "Sapphire Nitro Glow"
 zone = 0
 
 [ui]
@@ -104,9 +90,6 @@ class Config:
     display: DisplayConfig = field(default_factory=DisplayConfig)
     zone_size: int = 15
     link_cpu_gpu: bool = True
-    #: An explicit OpenRGB detector allowlist, empty unless the file sets one.
-    #: See `mimarchy.detectors` for why a device name is not enough on its own.
-    detectors: list[str] = field(default_factory=list)
 
     def leds_for(self, key: str) -> int:
         """The strip length one zone is resized to."""
@@ -180,5 +163,6 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
         display=display,
         zone_size=int(rgb_raw.get("zone_size", 15)),
         link_cpu_gpu=bool(raw.get("ui", {}).get("link_cpu_gpu", True)),
-        detectors=[str(name) for name in rgb_raw.get("detectors", [])],
+        # NOTE: no `detectors` field anymore. Old files may still carry one;
+        # it is ignored here so a pre-0.5.0 config keeps loading.
     )

@@ -9,15 +9,19 @@ from __future__ import annotations
 import argparse
 import signal
 import sys
+from typing import NoReturn
 
+from mimarchy import hidraw
 from mimarchy.config import load_config
-from mimarchy.display import ProtocolUnknownError, DEFAULT_INTERVAL, CPUDisplay, DisplayFrame, stream
+from mimarchy.display import (CPUDisplay, DEFAULT_INTERVAL, DisplayFrame,
+                              ProtocolUnknownError, stream)
 from mimarchy.hwmon import (
     read_cpu_fan_rpm,
     read_cpu_load,
     read_cpu_temp,
     read_gpu_temp,
 )
+from mimarchy.service import (claim_pidfile, clear_note, owner_pid, write_note)
 
 
 def build_frame() -> DisplayFrame:
@@ -37,8 +41,40 @@ def main() -> None:
                     help="send a single frame and exit (for testing)")
     args = ap.parse_args()
 
+    if not args.once and not claim_pidfile("displayd"):
+        # Same race as lightd: a manual `display on` next to the panel's
+        # supervision. Exit 0 with the owner named so this reads as a clean
+        # no-op. --once never claims — it is a probe that must leave a
+        # running daemon alone.
+        print(f"mimarchy-displayd already running (pid {owner_pid('displayd')})",
+              file=sys.stderr)
+        return
+    if not args.once:
+        clear_note("displayd")
+
     config = load_config()
-    display = CPUDisplay(config.display)
+
+    def _fail(message: str) -> "NoReturn":
+        # Fatal exits leave the one-line user action behind for `status`,
+        # which is what surfaces it in the panel without anyone reading logs.
+        # --once is a probe, not a daemon start: it reports the error but
+        # leaves the running daemon's note alone.
+        if not args.once:
+            write_note("displayd", message)
+        sys.exit(message)
+
+    try:
+        display = CPUDisplay(config.display)
+    except ProtocolUnknownError as exc:
+        _fail(str(exc))
+    except hidraw.HidError as exc:
+        _fail(str(exc))
+    except PermissionError:
+        _fail(
+            "Permission denied opening the display's hidraw node. Install "
+            "udev/99-mimarchy.rules, reload udev, and re-plug the device "
+            "(see README)."
+        )
 
     try:
         if args.once:
@@ -61,11 +97,14 @@ def main() -> None:
         stream(display, build_frame, interval=args.interval,
                stop=lambda: stopping)
     except ProtocolUnknownError as exc:
-        sys.exit(str(exc))
+        _fail(str(exc))
+    except hidraw.HidError as exc:
+        _fail(str(exc))
     except PermissionError:
-        sys.exit(
-            "Permission denied opening the display. Install "
-            "udev/99-mimarchy.rules (see README)."
+        _fail(
+            "Permission denied opening the display's hidraw node. Install "
+            "udev/99-mimarchy.rules, reload udev, and re-plug the device "
+            "(see README)."
         )
 
 

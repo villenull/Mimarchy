@@ -1,12 +1,10 @@
 """Tests for `mimarchy-setup`, the wizard that makes this run on other people's rigs.
 
-Everything here runs against a fake OpenRGB client and a `tmp_path` config, so a
-run cannot reach the real server, the real `~/.config/mimarchy/config.toml`, or
-any hardware. The fake is shaped like the real SDK objects rather than like the
-code's expectations — `zone.leds` is a list because that is how length is
-reported, `device.data.zones` carries `leds_min`/`leds_max` because that is where
-resizability actually lives — since a fake built from the code's assumptions
-cannot catch a wrong assumption.
+Everything here runs against faked drivers and a `tmp_path` config, so a
+run cannot reach the real hidraw nodes, the real I2C buses, or the real
+`~/.config/mimarchy/config.toml`. The fakes are shaped like the driver's
+answers — Aura channels plus Nitro presence — since a fake built from the
+code's assumptions cannot catch a wrong assumption.
 
 The interactive half is driven by handing `main()` a callable in place of
 `input`, which is also why the prompts are asked through one, rather than by
@@ -15,7 +13,6 @@ calling `input` directly.
 
 from __future__ import annotations
 
-import json
 import sys
 import tomllib
 from pathlib import Path
@@ -23,66 +20,40 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import pytest  # noqa: E402
-from openrgb.utils import ZoneType  # noqa: E402
 
+from mimarchy import hidraw  # noqa: E402
 from mimarchy import setup  # noqa: E402
 from mimarchy.config import load_config  # noqa: E402
-from mimarchy.rgb import RGBError  # noqa: E402
 
 
-class FakeZone:
-    def __init__(self, name, leds, zone_type=ZoneType.LINEAR):
-        self.name = name
-        self.leds = [None] * leds
-        self.type = zone_type
-
-
-class FakeZoneData:
-    def __init__(self, leds_min, leds_max):
-        self.leds_min, self.leds_max = leds_min, leds_max
-
-
-class FakeDeviceType:
-    def __init__(self, name):
-        self.name = name
-
-
-class FakeDevice:
-    def __init__(self, name, kind, zones, zone_data=None):
-        self.name = name
-        self.type = FakeDeviceType(kind)
-        self.zones = zones
-        if zone_data is not None:
-            self.data = type("Data", (), {"zones": zone_data})()
-
-
-class FakeClient:
-    def __init__(self, devices):
-        self.devices = devices
-
-
-def board_and_card() -> FakeClient:
-    """The development rig's shape: an addressable header, and a one-LED card."""
-    return FakeClient([
-        FakeDevice("ASUS PRIME X870-P WIFI", "MOTHERBOARD",
-                   [FakeZone("Addressable 1", 0), FakeZone("Aura Core", 1)],
-                   zone_data=[FakeZoneData(0, 120), FakeZoneData(1, 1)]),
-        FakeDevice("Sapphire Radeon RX 9070 XT Nitro+", "GPU",
-                   [FakeZone("GPU Zone", 1, ZoneType.SINGLE)],
-                   zone_data=[FakeZoneData(1, 1)]),
-    ])
+def board_and_card() -> list[setup.DetectedDevice]:
+    """The development rig's shape: Aura channels, and the card's fixed bar."""
+    return [
+        setup.DetectedDevice(
+            index=0, name="ASUS Aura USB", kind="motherboard", zones=[
+                setup.DetectedZone(index=0, name="Addressable RGB Header 1",
+                                   leds=0, addressable=True),
+                setup.DetectedZone(index=1, name="Aura Mainboard",
+                                   leds=1, addressable=False),
+            ]),
+        setup.DetectedDevice(
+            index=1, name="Sapphire Nitro Glow", kind="gpu", zones=[
+                setup.DetectedZone(index=0, name="GPU Bar",
+                                   leds=1, addressable=False),
+            ]),
+    ]
 
 
 @pytest.fixture(autouse=True)
-def no_real_server(monkeypatch):
-    """Nothing in this file may open a socket."""
-    def refuse(*a, **kw):
-        raise AssertionError("a test tried to reach the real OpenRGB server")
-    monkeypatch.setattr(setup, "connect", refuse)
+def no_real_hardware(monkeypatch):
+    """Nothing in this file may open a hidraw node or an I2C bus."""
+    def refuse():
+        raise AssertionError("a test tried to probe the real controllers")
+    monkeypatch.setattr(setup, "probe", refuse)
 
 
-def serve(monkeypatch, client) -> None:
-    monkeypatch.setattr(setup, "connect", lambda *a, **kw: client)
+def serve(monkeypatch, devices) -> None:
+    monkeypatch.setattr(setup, "probe", lambda: devices)
 
 
 def scripted(answers):
@@ -96,33 +67,26 @@ def scripted(answers):
     return ask
 
 
-def openrgb_config(tmp_path: Path, names) -> Path:
-    path = tmp_path / "OpenRGB.json"
-    path.write_text(json.dumps(
-        {"Detectors": {"detectors": {name: True for name in names}}}))
-    return path
-
-
 class TestListing:
     def test_list_prints_devices_zones_and_coordinates(self, monkeypatch, capsys):
         serve(monkeypatch, board_and_card())
         assert setup.main(["--list"]) == 0
         out = capsys.readouterr().out
 
-        assert "ASUS PRIME X870-P WIFI" in out
+        assert "ASUS Aura USB" in out
         assert "(motherboard)" in out
         # The coordinate is the thing the wizard asks for, so it has to be
         # printed rather than left to be counted off the indentation.
         assert "0.0" in out and "1.0" in out
-        assert "'GPU Zone'" in out
+        assert "'GPU Bar'" in out
 
     def test_list_distinguishes_addressable_from_fixed(self, monkeypatch, capsys):
         serve(monkeypatch, board_and_card())
         setup.main(["--list"])
         lines = capsys.readouterr().out.splitlines()
 
-        header = next(line for line in lines if "Addressable 1" in line)
-        gpu = next(line for line in lines if "GPU Zone" in line)
+        header = next(line for line in lines if "Addressable RGB Header 1" in line)
+        gpu = next(line for line in lines if "GPU Bar" in line)
         assert "addressable" in header
         assert "fixed" in gpu
 
@@ -153,30 +117,23 @@ class TestListing:
 
 
 class TestDegradation:
-    def test_no_server_is_a_message_and_not_a_traceback(self, monkeypatch, capsys):
-        def refuse(*a, **kw):
-            raise RGBError("Can't reach the OpenRGB server on 127.0.0.1:6742 "
-                           "— is it running? Try: systemctl --user start "
-                           "openrgb.service")
-        monkeypatch.setattr(setup, "connect", refuse)
+    def test_a_probe_failure_is_a_message_and_not_a_traceback(
+            self, monkeypatch, capsys):
+        def refuse():
+            raise hidraw.HidError("cannot open /dev/hidraw2: Permission denied")
+        monkeypatch.setattr(setup, "probe", refuse)
 
         assert setup.main(["--list"]) == 1
-        err = capsys.readouterr().err
-        assert "systemctl --user start openrgb.service" in err
+        assert "Permission denied" in capsys.readouterr().err
 
-    def test_no_devices_blames_the_detector_list(self, monkeypatch, capsys):
-        """The likely cause, and the one nobody guesses.
-
-        `install.sh` narrows detectors before the server first starts, so a
-        machine whose hardware was never in that narrow set sees nothing — and
-        "check your cables" would send the user in exactly the wrong direction.
-        """
-        serve(monkeypatch, FakeClient([]))
+    def test_no_devices_names_permissions_and_power(self, monkeypatch, capsys):
+        """The two causes are the udev rule and a cold boot, never software."""
+        serve(monkeypatch, [])
         assert setup.main(["--list"]) == 0
         out = capsys.readouterr().out
 
-        assert "detector list was narrowed" in out
-        assert "--discover" in out
+        assert "udev" in out
+        assert "cold boot" in out
 
     def test_the_wizard_refuses_a_pipe_rather_than_hanging(
             self, monkeypatch, capsys):
@@ -210,13 +167,10 @@ class TestDegradation:
 
 
 class TestWizard:
-    def run(self, monkeypatch, tmp_path, answers, detectors=("ASUS Aura Core",)):
+    def run(self, monkeypatch, tmp_path, answers):
         serve(monkeypatch, board_and_card())
         config = tmp_path / "config.toml"
-        code = setup.main(
-            ["--config", str(config),
-             "--openrgb-config", str(openrgb_config(tmp_path, detectors))],
-            ask=scripted(answers))
+        code = setup.main(["--config", str(config)], ask=scripted(answers))
         return code, config
 
     def test_writes_the_zones_that_were_picked(self, monkeypatch, tmp_path,
@@ -228,7 +182,7 @@ class TestWizard:
 
         loaded = load_config(config)
         assert set(loaded.zones) == {"cpu_fans", "gpu"}
-        assert loaded.zones["cpu_fans"].device == "ASUS PRIME X870-P WIFI"
+        assert loaded.zones["cpu_fans"].device == "ASUS Aura USB"
         assert loaded.zones["cpu_fans"].zone == 0
         assert loaded.zones["gpu"].zone == 0
 
@@ -251,8 +205,8 @@ class TestWizard:
 
     def test_a_fixed_zone_is_not_asked_about_its_length(self, monkeypatch,
                                                        tmp_path, capsys):
-        """A resize a fixed zone will reject is silent, so the question would be
-        an invitation to a value that never takes effect."""
+        """Asking about a fixed zone would invite a value that never takes
+        effect, so the question is skipped rather than stored."""
         code, config = self.run(monkeypatch, tmp_path, ["1.0", "", ""])
         capsys.readouterr()
         assert code == 0
@@ -323,11 +277,10 @@ class TestWizard:
 
 
 class TestWrittenFile:
-    def written(self, monkeypatch, tmp_path, detectors=()):
+    def written(self, monkeypatch, tmp_path):
         serve(monkeypatch, board_and_card())
         config = tmp_path / "config.toml"
-        setup.main(["--config", str(config),
-                    "--openrgb-config", str(openrgb_config(tmp_path, detectors))],
+        setup.main(["--config", str(config)],
                    ask=scripted(["0.0", "", "24", "1.0", "", ""]))
         return config
 
@@ -347,18 +300,27 @@ class TestWrittenFile:
         text = config.read_text()
 
         assert "rainbow shows a quarter of the hue wheel" in text
-        assert "#4888" in text
-        assert "substring" in text
+        assert "mimarchy-setup --list" in text
+        assert "channel index" in text
+
+    def test_no_detector_allowlist_is_written(self, monkeypatch, tmp_path,
+                                              capsys):
+        """Controllers are opened directly; there is no probe list to narrow."""
+        config = self.written(monkeypatch, tmp_path)
+        capsys.readouterr()
+
+        assert "detectors" not in config.read_text().lower()
 
     def test_device_names_are_escaped_rather_than_pasted(self, monkeypatch,
                                                         tmp_path, capsys):
         """A quote in a device name would otherwise write a broken file."""
-        serve(monkeypatch, FakeClient([
-            FakeDevice('Weird "Quoted" \\ Device', "LEDSTRIP",
-                       [FakeZone("Zone", 0)])]))
+        serve(monkeypatch, [setup.DetectedDevice(
+            index=0, name='Weird "Quoted" \\ Device', kind="ledstrip", zones=[
+                setup.DetectedZone(index=0, name="Zone", leds=0,
+                                   addressable=True),
+            ])])
         config = tmp_path / "config.toml"
-        setup.main(["--config", str(config),
-                    "--openrgb-config", str(openrgb_config(tmp_path, []))],
+        setup.main(["--config", str(config)],
                    ask=scripted(["0.0", "", "10", ""]))
         capsys.readouterr()
 
@@ -370,8 +332,7 @@ class TestWrittenFile:
         config = tmp_path / "config.toml"
         config.write_text("# hand written, with notes\n")
         serve(monkeypatch, board_and_card())
-        setup.main(["--config", str(config),
-                    "--openrgb-config", str(openrgb_config(tmp_path, []))],
+        setup.main(["--config", str(config)],
                    ask=scripted(["1.0", "", ""]))
         capsys.readouterr()
 
@@ -388,8 +349,7 @@ class TestWrittenFile:
             "[ui]\nlink_cpu_gpu = false\n"
             "[display]\nvendor_id = 0x1234\nproduct_id = 0x5678\n")
         serve(monkeypatch, board_and_card())
-        setup.main(["--config", str(config),
-                    "--openrgb-config", str(openrgb_config(tmp_path, []))],
+        setup.main(["--config", str(config)],
                    ask=scripted(["1.0", "", ""]))
         capsys.readouterr()
 
@@ -397,33 +357,3 @@ class TestWrittenFile:
         assert loaded.display.vendor_id == 0x1234
         assert loaded.display.product_id == 0x5678
         assert loaded.link_cpu_gpu is False
-
-    def test_the_detector_allowlist_follows_the_devices_chosen(
-            self, monkeypatch, tmp_path, capsys):
-        config = self.written(monkeypatch, tmp_path, detectors=[
-            "ASUS Aura Addressable", "ASUS Aura Core", "ASUS Aura Motherboard",
-            "Sapphire Radeon RX 9070 XT Nitro+",
-            "Sapphire Radeon RX 5700 XT Nitro+",
-            "Corsair Lighting Node Pro",
-        ])
-        capsys.readouterr()
-
-        assert set(load_config(config).detectors) == {
-            "ASUS Aura Addressable", "ASUS Aura Core", "ASUS Aura Motherboard",
-            "Sapphire Radeon RX 9070 XT Nitro+",
-        }
-
-    def test_an_unreadable_openrgb_config_still_writes_the_zones(
-            self, monkeypatch, tmp_path, capsys):
-        """The zones are what the user came for; the allowlist has its own tool."""
-        serve(monkeypatch, board_and_card())
-        config = tmp_path / "config.toml"
-        code = setup.main(["--config", str(config),
-                           "--openrgb-config", str(tmp_path / "nope.json")],
-                          ask=scripted(["1.0", "", ""]))
-        out = capsys.readouterr().out
-
-        assert code == 0
-        assert "start OpenRGB once first" in out
-        assert load_config(config).zones
-        assert load_config(config).detectors == []

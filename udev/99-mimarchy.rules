@@ -1,4 +1,6 @@
-# Balam Rush Heliux Pro HEX75 CPU cooler display controller.
+# Mimarchy: hidraw access for the cooler display and the Aura controller.
+#
+# Cooler display: Balam Rush Heliux Pro HEX75 panel controller.
 #
 # usb.ids mislabels this device as an "MSR-101U magnetic card reader"; it is a
 # no-name microcontroller exposing a vendor-defined 64-byte HID pipe. See
@@ -22,10 +24,21 @@
 # migration of 2026-09-03 removes users from `input` — membership is raw
 # access to every keyboard — so on Omarchy the group grants nothing.
 #
-# install.sh does not have root copy this file out of the checkout — it prints
-# a command with the rule spelled out inline, so what root writes is what the
+# Aura controller: the motherboard's ASUS Aura USB chip, which the lighting
+# backend drives directly over hidraw (see src/mimarchy/aura.py). Its node is
+# root-only for the same reason, so it gets the same treatment: the tag plus
+# the builtin run here, with GROUP="input" as the same no-logind fallback.
+#
+# The graphics card needs no rule: its LED controller hangs off the GPU's I2C
+# adapters, which already carry uaccess on display-class devices through
+# 60-ddcutil-i2c.rules — verified live, with the controller answering at
+# /dev/i2c-7.
+#
+# Root is never asked to copy this file out of the checkout: the README prints
+# a command with the rules spelled out inline, so what root writes is what the
 # user just read, not what a user-writable directory holds by the time sudo
-# runs. This copy documents the rule and anchors the sync check in
-# tests/test_install_inputs.py; the rule is one line so the two can be
+# runs. This copy documents the rules and anchors the sync check in
+# tests/test_install_inputs.py; each rule is one line so the two can be
 # compared byte for byte.
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="5131", ATTRS{idProduct}=="2007", TAG+="uaccess", RUN{builtin}+="uaccess", GROUP="input", MODE="0660"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="19af", TAG+="uaccess", RUN{builtin}+="uaccess", GROUP="input", MODE="0660"

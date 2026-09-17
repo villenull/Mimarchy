@@ -11,17 +11,20 @@ import qs.Ui
 // this file is a crash in their desktop — and QML cannot be unit tested from
 // this repo at all. What is left here is deliberately declarative: read a JSON
 // document, draw it, and hand every interaction back to a subprocess.
-//
+
 // State arrives by two routes, for two different reasons:
 //
 //   * The lighting state file is *watched*. Effect, speed and link changes made
 //     by any other `mimarchy-ctl` invocation — a Hyprland keybinding, a shell
 //     script — show up here within a frame, with no polling and no process.
-//   * Whether the two systemd units are running needs `mimarchy-ctl status
-//     --json`, so that part is polled: quickly while the panel is open,
-//     slowly while it is closed. A closed icon only needs to notice the
-//     daemon dying outright — a crash never touches the state file, so the
-//     watch above cannot see it, and this poll is the only thing that does.
+//   * Whether the lightd child this panel supervises is alive needs
+//     `mimarchy-ctl status --json`, so that part is polled: quickly while the
+//     panel is open, slowly while it is closed. A closed icon only needs to
+//     notice the daemon dying outright — a crash never touches the state file,
+//     so the watch above cannot see it, and this poll is the only thing that
+//     does. When the poll reports lighting inactive and no live headless
+//     daemon owns the pidfile, the panel spawns its own lightd and adopts
+//     its state as truth thereafter.
 //
 // This panel is the full control surface — every control the old TUI had now
 // lives here, one block per zone. No tooltip: hover shows nothing, on
@@ -35,15 +38,28 @@ Panel {
 
   // The parsed `mimarchy-ctl status --json` document, or null before the first
   // successful read. Null is meaningfully different from "everything is off":
-  // it is what "the backend is not installed" looks like, and the panel says so
-  // rather than drawing a confident row of zeroes.
+  // it is what "the backend has not produced a reading yet" looks like, and
+  // the panel says so rather than drawing a confident row of zeroes.
   property var status: null
+  // Only for genuine spawn/parse failures of the in-repo backend below — the
+  // absolute path cannot be missing from PATH, so this no longer means "not
+  // installed". Sticky until a good read clears it, so one failed poll does
+  // not flicker the panel.
   property bool backendMissing: false
 
-  readonly property bool lightingActive: status ? status.lighting_active === true : false
-  readonly property bool displayActive: status ? status.display_active === true : false
-  readonly property bool linked: status ? status.linked === true : true
-  readonly property int speedStops: status && status.speed_stops ? status.speed_stops : 5
+  // The backend ships inside this repo: Panel.qml lives in quickshell/, the
+  // entry points in bin/. Resolved off this file so the plugin works wherever
+  // it is checked out, with no install step and nothing looked up on $PATH.
+  readonly property string backendDir: String(Qt.resolvedUrl("../bin")).replace(/^file:\/\//, "")
+  // Named interpreter rather than the scripts' shebang, so nothing is looked
+  // up on $PATH. -I ignores PYTHONPATH and the user site directory, -S skips
+  // site imports; the backend is stdlib-only.
+  readonly property var ctlCommand: ["/usr/bin/python3", "-I", "-S", backendDir + "/mimarchy-ctl"]
+  readonly property var lightCommand: ["/usr/bin/python3", "-I", "-S", backendDir + "/mimarchy-lightd"]
+
+  // One-line user action the light daemon left behind on a fatal exit (the
+  // udev sudo hint, e.g.), null when the daemon runs or never started.
+  readonly property string daemonNote: (status && status.daemon_note) ? String(status.daemon_note) : ""
 
   readonly property var targetKeys: {
     if (!status || !status.targets) return []
@@ -205,7 +221,7 @@ Panel {
   Process {
     id: statusProcess
     running: false
-    command: ["mimarchy-ctl", "status", "--json"]
+    command: root.ctlCommand.concat(["status", "--json"])
 
     stdout: StdioCollector {
       waitForEnd: true
@@ -214,10 +230,14 @@ Panel {
           var parsed = JSON.parse(String(text || ""))
           root.status = (parsed && typeof parsed === "object") ? parsed : null
           root.backendMissing = false
+          // The daemon came back on its own (a headless start, a reload race
+          // resolved) — whatever the child did before stops mattering.
+          if (root.lightingActive) root.lightFailures = 0
+          root.ensureLightDaemon()
         } catch (e) {
-          // Malformed output is not the same as a missing backend, and is not
-          // worth clearing a good previous reading over: keep what is on screen
-          // and try again on the next tick.
+          // Malformed output is not a failed backend, and is not worth
+          // clearing a good previous reading over: keep what is on screen and
+          // try again on the next tick.
           console.warn("mimarchy", "could not parse status", e)
         }
       }
@@ -230,20 +250,20 @@ Panel {
     onStarted: statusProcess.launched = true
 
     onExited: function (exitCode) {
-      // A backend that ran and failed. Distinct from the case below: this one
-      // is installed, so the message it earns is about the exit code, not about
-      // installing it.
+      // The backend runs from an absolute path and is installed by
+      // definition, so a nonzero exit is a failure worth flagging rather
+      // than a setup step the user skipped.
       if (exitCode !== 0 && !root.status) root.backendMissing = true
     }
 
-    // The case `onExited` cannot see. A command that is not on PATH never
-    // starts, so Quickshell emits neither `started` nor `exited` — it logs
-    // "Process failed to start" and drops `running` back to false with a null
-    // processId, and that lone signal is the entire report. Watching for exit
-    // 127 instead, which is what a *shell* would have returned, meant
-    // `backendMissing` was never set at all: the panel fell through to
-    // "Lighting daemon stopped — LEDs frozen", which sends someone to
-    // `systemctl` over a program that was never installed.
+    // The case `onExited` cannot see. An interpreter that cannot be launched
+    // never starts, so Quickshell emits neither `started` nor `exited` — it
+    // logs "Process failed to start" and drops `running` back to false with
+    // a null processId, and that lone signal is the entire report. Watching
+    // for an exit code instead, which is what a *shell* would have produced,
+    // would mean `backendMissing` was never set at all: the panel would fall
+    // through to "Lighting daemon stopped", which blames the daemon for a
+    // backend that never ran.
     //
     // Measured rather than assumed, because the two orderings are what make
     // this safe: a healthy poll reports running=true, started, exited, then
@@ -292,12 +312,64 @@ Panel {
       root.pendingAction = args
       return
     }
-    actionProcess.command = ["mimarchy-ctl"].concat(args)
+    actionProcess.command = root.ctlCommand.concat(args)
     actionProcess.running = true
   }
 
-  // Closed, this only has to notice the lighting daemon stopping, which is not
-  // a per-second question. Open, it is drawing live temperatures.
+  // ---- the light daemon, supervised --------------------------------------
+
+  // The panel owns lightd the way readout owns its collector: one long-lived
+  // child, restarted with backoff when it crashes. Spawned only when the
+  // latest status says lighting is inactive — a live headless daemon owns
+  // the pidfile then, and is adopted instead: never spawn over it. Once the
+  // child is up, its own state is truth; status just reports it.
+  //
+  // Exit 0 is clean and earns no retry: that is the adoption-refusal path
+  // (another owner holds the pidfile; the message names its pid) and the
+  // only way a daemon that runs forever stops on purpose. Nonzero is a
+  // crash or a fatal exit (no device, no permission — which also leaves the
+  // one-line note status surfaces as daemonNote), and backs off: a daemon
+  // that dies immediately every time would otherwise respawn for the rest
+  // of the session.
+  property int lightFailures: 0
+  readonly property int maxLightRetries: 5
+  property double lightStartedAt: 0
+  readonly property bool lightLost: lightFailures > maxLightRetries
+
+  function ensureLightDaemon() {
+    if (root.backendMissing || !root.status) return
+    if (root.lightingActive) return
+    if (lightProcess.running || lightRestartTimer.running) return
+    if (root.lightLost) return
+    lightProcess.running = true
+  }
+
+  Process {
+    id: lightProcess
+    running: false
+    command: root.lightCommand
+
+    onStarted: root.lightStartedAt = Date.now()
+
+    onExited: function (exitCode) {
+      if (exitCode === 0) return
+      var ranLong = Date.now() - root.lightStartedAt > 30000
+      root.lightFailures = ranLong ? 0 : root.lightFailures + 1
+      if (root.lightFailures <= root.maxLightRetries) {
+        lightRestartTimer.interval = Math.min(60000, 3000 * Math.pow(2, Math.max(0, root.lightFailures - 1)))
+        lightRestartTimer.restart()
+      }
+    }
+  }
+
+  Timer {
+    id: lightRestartTimer
+    interval: 3000
+    onTriggered: root.ensureLightDaemon()
+  }
+
+  // Closed, this only has to notice the supervised light daemon stopping,
+  // which is not a per-second question. Open, the panel is drawn from it.
   Timer {
     interval: (root.opened ? root.pollIntervalSec : root.idlePollIntervalSec) * 1000
     running: true
@@ -419,10 +491,10 @@ Panel {
   // set` rather than pinning a family the user did not choose.
   readonly property string glyph: "󰌵"
 
-  // Dimmed when the LEDs are frozen — the daemon is stopped, the effect is
-  // `off`, or the backend was never installed. That is the one piece of state
-  // worth reading from across the room, so it is the one the icon spends its
-  // only channel on.
+  // Dimmed when the LEDs are frozen — the daemon is stopped or the effect is
+  // `off`, or the backend has yet to produce a reading. That is the one piece
+  // of state worth reading from across the room, so it is the one the icon
+  // spends its only channel on.
   //
   // Expressed as `dimmed` rather than a darkened colour, because those are not
   // the same thing on a light theme: `barForeground` is near-black there, so
@@ -528,13 +600,14 @@ Panel {
           text: "Lighting"
         }
 
-        // The backend-missing case gets a sentence rather than an empty panel:
-        // a plugin installed before its Python side is a normal state to be in
-        // for a minute, and the fix is one command.
+        // The backend-failure case gets a sentence rather than an empty panel:
+        // the interpreter or the script failed to run, which with an in-repo
+        // backend is a genuine failure rather than a setup step skipped — the
+        // next successful poll clears it.
         Text {
           width: parent.width
           visible: root.backendMissing
-          text: "mimarchy-ctl not found.\nRun install.sh from the Mimarchy repo."
+          text: "Mimarchy backend failed to run.\nCheck the shell log and reopen the panel."
           wrapMode: Text.WordWrap
           color: Color.popups.text
           font.family: Style.font.family
@@ -559,11 +632,13 @@ Panel {
 
         // Stated where it can be read before anything below it is touched: a
         // frozen strip answers every control in the panel identically, and
-        // finding that out one click at a time is the bad version.
+        // finding that out one click at a time is the bad version. When the
+        // daemon died with a reason it left a one-line user action behind
+        // (the udev sudo hint, e.g.) — surfaced here with zero commands run.
         Text {
           width: parent.width
           visible: !root.backendMissing && !root.lightingActive
-          text: "Lighting daemon stopped — LEDs frozen."
+          text: root.daemonNote !== "" ? root.daemonNote : "Lighting daemon stopped — LEDs frozen."
           wrapMode: Text.WordWrap
           color: Color.urgent
           font.family: Style.font.family

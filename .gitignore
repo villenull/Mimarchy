@@ -2,13 +2,11 @@
 # second checkout rather than anything belonging in the tree.
 .claude/
 
-# Python
-#
-# Note: install.sh builds its virtualenv in ~/.local/share/mimarchy, not here.
+# Python (no venv: the backend is stdlib-only and ships in bin/).
 # This repo doubles as an Omarchy shell plugin, and `omarchy plugin validate`
-# refuses a symlink anywhere inside a plugin folder except under .git — a venv
-# has several. These entries cover a hand-made one during development; keeping
-# it out of the tree entirely is what tests/test_manifest.py enforces.
+# refuses a symlink anywhere inside a plugin folder except under .git. These
+# entries cover a hand-made venv during development; keeping one out of the
+# tree is what tests/test_manifest.py enforces.
 .venv/
 venv/
 __pycache__/

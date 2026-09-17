@@ -1,0 +1,15 @@
+#!/usr/bin/python3
+"""Run mimarchy-displayd from this checkout without installing anything.
+
+Resolves its own real path to find ../src, so `mimarchy-ctl display on`
+starts the backend in this repo.
+"""
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+from mimarchy.displayd import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())
