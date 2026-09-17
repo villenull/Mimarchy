@@ -101,3 +101,36 @@ class TestSensorsPresent:
         }))
 
         assert hwmon.read_gpu_temp() == 40.0
+
+class TestCpuFanSource:
+    """Only nct6687 is a CPU-fan source; the GPU fan must never qualify."""
+
+    def test_cpu_fan_preferred_over_pump_fan(self, monkeypatch):
+        fake_sensors(monkeypatch, stdout=json.dumps(
+            {"nct6687-isa-0a20": {"CPU Fan": {"fan1_input": 768},
+                                  "Pump Fan": {"fan2_input": 1500}}}))
+
+        assert hwmon.read_cpu_fan_rpm() == 768
+
+    def test_pump_fan_is_fallback_when_cpu_fan_missing(self, monkeypatch):
+        fake_sensors(monkeypatch, stdout=json.dumps(
+            {"nct6687-isa-0a20": {"Pump Fan": {"fan2_input": 1500}}}))
+
+        assert hwmon.read_cpu_fan_rpm() == 1500
+
+    def test_no_source_returns_none(self, monkeypatch):
+        """No nct6687 chip (driver not loaded) means no CPU fan to read."""
+        fake_sensors(monkeypatch, stdout=json.dumps(
+            {"k10temp-pci-00c3": {"Tctl": {"temp1_input": 52.2}},
+             "amdgpu-pci-0300": {"fan1": {"fan1_input": 0},
+                                 "edge": {"temp1_input": 40.0}}}))
+
+        assert hwmon.read_cpu_fan_rpm() is None
+
+    def test_gpu_fan_never_counts_as_cpu_fan(self, monkeypatch):
+        """The discrete GPU's spinning fan is not the CPU fan."""
+        fake_sensors(monkeypatch, stdout=json.dumps(
+            {"amdgpu-pci-0300": {"fan1": {"fan1_input": 1200},
+                                 "edge": {"temp1_input": 40.0}}}))
+
+        assert hwmon.read_cpu_fan_rpm() is None

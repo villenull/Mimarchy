@@ -134,6 +134,19 @@ def read_cpu_fan_rpm(data: dict | None = None) -> float | None:
 
     Prefers nct6687's "CPU Fan" over "Pump Fan": on this board the latter
     reports an implausible ~255 while the former tracks the cooler's fans.
+
+    Only nct6687 counts as a CPU-fan source. The discrete GPU's fan1
+    (amdgpu-pci-0300) is the card's own fan — it idles at 0 under fan-stop
+    and must never be reported here. Checked 2026-09-17: `sensors -j`
+    exposes no other fan input (only amdgpu fan1 = 0), every
+    /sys/class/hwmon/hwmon*/fan*_input agrees, and the 'asus' (eeepc-wmi)
+    node exports no sensor files at all — so with the nct6687 chip absent
+    there is simply no CPU fan to read and this returns None.
+
+    The nct6687 chip appears only with the out-of-tree nct6687d driver
+    (force=1 plus acpi_enforce_resources=lax on the kernel command line;
+    see docs/hardware-notes.md). Until that is installed, None is the
+    correct answer, not 0 and not the GPU fan.
     """
     fans = read_fans(data)
     for preferred in ("CPU Fan", "Pump Fan"):

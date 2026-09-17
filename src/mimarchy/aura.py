@@ -21,6 +21,16 @@ starting with `0xEC` — that first byte is the report id, not payload:
   r,g,b ...]`, 0x14 LEDs per packet, the last packet of a channel ORed with
   `0x80` to apply. Channel numbers are the *direct* channel (addressable
   headers are addressed by header index), not the effect channel.
+* Direct entry (`0x35`) — `[0xEC, 0x35, effect_channel, 0x00, 0x00, 0xFF]`,
+  one packet per channel, sent before the first direct frame. The board
+  powers up (and is left by other tools) in a firmware effect mode where it
+  runs its own animation and ignores direct frames, so OpenRGB parks every
+  zone in Direct first (`DeviceUpdateMode` sends `SetMode(zone, Direct)`,
+  which is just this packet with mode `0xFF`, before the first
+  `DeviceUpdateLEDs`). Channel here is the *effect* channel — the zone's
+  position in the channel list — which only coincides with the direct
+  channel while there is no onboard zone (the onboard zone is effect 0 but
+  direct `0x04`, pushing every header's effect channel up by one).
 * Gen1 init (`EC 52 53 00 01`) — sent once after open on mainboard controllers.
 
 The board's *registers* are channels fixed at probe time (onboard LEDs, then
@@ -46,6 +56,8 @@ MAX_ADDRESSABLE = 120
 _REQ_CONFIG = 0xB0
 _CONFIG_OK = 0x30
 _MODE_DIRECT = 0x40
+_MODE_EFFECT = 0x35
+_EFFECT_DIRECT = 0xFF
 _GEN1 = bytes((0xEC, 0x52, 0x53, 0x00, 0x01))
 
 # Config-table field offsets, straight from OpenRGB's AuraMainboardController
@@ -62,6 +74,7 @@ class Channel:
     name: str
     addressable: bool
     direct_channel: int
+    effect_channel: int
 
 def _packet(*body: int) -> bytes:
     """A 65-byte HID report starting with the `0xEC` report id.
@@ -124,16 +137,31 @@ class AuraBoard:
         # LED naming — so they add no channel of their own.
         channels: list[Channel] = []
         if onboard > 0:
-            channels.append(Channel(0, "Aura Mainboard", False, 0x04))
+            channels.append(Channel(0, "Aura Mainboard", False, 0x04, 0))
         for i in range(min(addressable, 8)):
             channels.append(Channel(len(channels),
                                     f"Addressable RGB Header {i + 1}",
-                                    True, i))
+                                    True, i, len(channels)))
         if not channels:  # pragma: no cover — table parsed but empty
             raise hidraw.HidError(
                 f"Aura controller at {self.path} reported no channels")
         self.channels = channels
         self._dev.write(_GEN1.ljust(hidraw.REPORT_LEN, b"\x00"))
+        for channel in channels:
+            self.enter_direct(channel)
+
+    def enter_direct(self, channel: Channel) -> None:
+        """Park one channel in Direct mode so it honours direct frames.
+
+        This is OpenRGB's `AuraMainboardController::SetMode` with mode Direct
+        (`SendEffect(effect_channel, 0xFF)`), which `DeviceUpdateMode` sends
+        for every zone before the first `DeviceUpdateLEDs`. Without it the
+        board stays in whatever firmware effect it powered up in and ignores
+        the `0x40` frames `set_channel` sends. The channel addressed is the
+        *effect* channel (`index`), not the direct channel the frames use.
+        """
+        self._dev.write(_packet(0xEC, _MODE_EFFECT, channel.effect_channel,
+                                0x00, 0x00, _EFFECT_DIRECT))
 
     def set_channel(self, channel: Channel,
                     colours: list[tuple[int, int, int]]) -> None:

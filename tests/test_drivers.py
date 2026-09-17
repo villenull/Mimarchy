@@ -85,15 +85,23 @@ def _config_reply(*, addressable: int, onboard: int) -> bytes:
 def test_aura_table_parse_and_gen1_init() -> None:
     fake = _FakeHid([_config_reply(addressable=2, onboard=5)])
     board = aura.AuraBoard(fake, "/dev/hidraw9")  # type: ignore[arg-type]
-    assert [(c.index, c.name, c.addressable, c.direct_channel) for c in board.channels] == [
-        (0, "Aura Mainboard", False, 0x04),
-        (1, "Addressable RGB Header 1", True, 0),
-        (2, "Addressable RGB Header 2", True, 1),
+    assert [(c.index, c.name, c.addressable, c.direct_channel, c.effect_channel)
+            for c in board.channels] == [
+        (0, "Aura Mainboard", False, 0x04, 0),
+        (1, "Addressable RGB Header 1", True, 0, 1),
+        (2, "Addressable RGB Header 2", True, 1, 2),
     ]
-    # Config query first, Gen1 init once right after open.
+    # Config query first, Gen1 init once right after open, then one
+    # Direct-entry packet per channel (OpenRGB's DeviceUpdateMode parity).
     assert fake.writes[0][:2] == bytes((0xEC, 0xB0))
     assert fake.writes[1][:5] == bytes((0xEC, 0x52, 0x53, 0x00, 0x01))
-    assert len(fake.writes) == 2
+    assert [w[:6] for w in fake.writes[2:]] == [
+        bytes((0xEC, 0x35, 0, 0x00, 0x00, 0xFF)),
+        bytes((0xEC, 0x35, 1, 0x00, 0x00, 0xFF)),
+        bytes((0xEC, 0x35, 2, 0x00, 0x00, 0xFF)),
+    ]
+    assert len(fake.writes) == 5
+    assert all(len(w) == 65 for w in fake.writes)
 
 
 def test_aura_set_channel_chunks_45_colours() -> None:
@@ -113,6 +121,35 @@ def test_aura_set_channel_chunks_45_colours() -> None:
     assert offsets_counts_flags == [(0, 20, 0x00), (20, 20, 0x00), (40, 5, 0x80)]
     # First LED of the last chunk lands at the right byte offset.
     assert tuple(fake.writes[2][5:8]) == colours[40]
+
+
+def test_aura_direct_entry_uses_effect_channel_not_direct() -> None:
+    """The onboard zone is effect 0 but direct 0x04, so headers must not use
+    their direct channel in the 0x35 packet — that packet would park the wrong
+    zone and leave the target ignoring frames."""
+    fake = _FakeHid([_config_reply(addressable=1, onboard=5)])
+    board = aura.AuraBoard(fake, "/dev/hidraw9")  # type: ignore[arg-type]
+    _, header = board.channels
+    assert (header.direct_channel, header.effect_channel) == (0, 1)
+    fake.writes.clear()
+    board.enter_direct(header)
+    assert len(fake.writes) == 1
+    assert fake.writes[0][:6] == bytes((0xEC, 0x35, 0x01, 0x00, 0x00, 0xFF))
+    assert len(fake.writes[0]) == 65
+
+
+def test_aura_no_onboard_keeps_effect_and_direct_aligned() -> None:
+    """This rig's shape: no onboard zone, so header N is effect N and direct
+    N. The packets still go out once per open, addressed by effect channel."""
+    fake = _FakeHid([_config_reply(addressable=3, onboard=0)])
+    board = aura.AuraBoard(fake, "/dev/hidraw9")  # type: ignore[arg-type]
+    assert [(c.direct_channel, c.effect_channel) for c in board.channels] == [
+        (0, 0), (1, 1), (2, 2)]
+    assert [w[:6] for w in fake.writes[2:]] == [
+        bytes((0xEC, 0x35, 0, 0x00, 0x00, 0xFF)),
+        bytes((0xEC, 0x35, 1, 0x00, 0x00, 0xFF)),
+        bytes((0xEC, 0x35, 2, 0x00, 0x00, 0xFF)),
+    ]
 
 
 def test_aura_rejects_bad_table_answer() -> None:

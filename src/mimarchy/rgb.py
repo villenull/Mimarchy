@@ -258,9 +258,10 @@ class RGBController:
         """Put just this zone's controller under external control.
 
         Per-zone rather than blanket, so that one device can run a firmware
-        effect while another is rendered without being dragged out of it. A
-        no-op for Aura zones: the board only speaks Direct, so there is
-        nothing to park.
+        effect while another is rendered without being dragged out of it. For
+        an Aura zone this re-sends the Direct-entry packet, since another tool
+        (or a reboot) can leave the board in a firmware effect that ignores
+        direct frames; the open path already sent it once (see `aura.py`).
 
         *Leaving* a firmware effect is far less reliable than entering one: a
         single request was dropped 5 times out of 5 on the card, which is what
@@ -268,8 +269,10 @@ class RGBController:
         to the next effect. There is nothing to check — the fix is to send it,
         let the card settle, and send it again unconditionally.
         """
-        kind, _ = self._resolve(logical_name)
+        kind, channel = self._resolve(logical_name)
         if kind != "nitro":
+            assert self._aura is not None and channel is not None
+            self._aura.enter_direct(channel)
             return
         assert self._nitro is not None
         self._nitro.set_external(True)
