@@ -1,0 +1,15 @@
+#!/usr/bin/python3
+"""Run mimarchy-ctl from this checkout without installing anything.
+
+Resolves its own real path to find ../src, so the QML panel and a bare
+`./bin/mimarchy-ctl status` both use the backend in this repo.
+"""
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+from mimarchy.ctl import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())

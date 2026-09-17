@@ -1,30 +1,22 @@
-"""LED control via the OpenRGB SDK.
+"""LED control, driven directly from stdlib-only drivers.
 
-Drives whatever zones `config.toml` names, on however many controllers they sit
-across — `mimarchy-setup` fills that file in from what OpenRGB detects. The
-development rig has two, and they are worth describing because everything below
-was learned on them:
+One facade over two controllers that are genuinely separate hardware:
 
-  * the motherboard's ASUS Aura USB controller (CPU cooler fan LEDs), and
-  * the Sapphire RX 9070 XT's own controller, reached over I2C on the card.
-
-They are genuinely separate hardware. The GPU's ARGB connector is a source, not
-a sink, so nothing on the motherboard headers can drive the card's LEDs — I2C
-is the only route to them.
+  * the motherboard's ASUS Aura USB controller (`mimarchy.aura`), and
+  * the Sapphire RX 9070 XT's own Nitro Glow controller (`mimarchy.nitro`),
+    reached over I2C on the card — the GPU's ARGB connector is a source, not
+    a sink, so nothing on the motherboard headers can drive the card's LEDs.
 
 Three non-obvious things this handles, all learned the hard way here:
 
-1. Addressable (ARGB) zones come up reporting `leds=0`. OpenRGB cannot know how
-   long a strip is, and writing a colour to a zero-length zone silently does
-   nothing — no error, no effect. Zones must be resized before any write will
-   reach hardware. This alone looked exactly like "unsupported board".
-2. Colour writes only take effect in a direct-drive mode. In an effect mode
-   (Rainbow, Breathing, ...) the controller keeps running its own animation and
-   ignores SDK colours. The two controllers name that mode differently:
-   the board calls it `Direct`, the GPU calls it `Static`.
-3. Only a narrow detector set may be enabled — see the note in README about
-   OpenRGB issue #4888. Broad GPU/I2C probing has been reported to hard-freeze
-   this card; the single matching Sapphire detector is safe on kernel 7.1.4.
+1. Addressable (ARGB) strips have no length until told. A strip shows whatever
+   frames arrive, so the render length comes from `config.toml`, and a
+   zero-length zone is skipped rather than written to no effect.
+2. Rendered colours only show while the Nitro card is in external control.
+   In a firmware effect mode the controller runs its own animation and ignores
+   colour writes, so entering and leaving firmware is explicit.
+3. Only narrow buses are ever probed — see `mimarchy.nitro` for why a broad
+   I2C scan is not on the table.
 """
 
 from __future__ import annotations
@@ -33,39 +25,15 @@ import math
 import time
 from dataclasses import dataclass
 
-from openrgb import OpenRGBClient
-from openrgb.utils import RGBColor
-
+from mimarchy import aura as _aura
+from mimarchy import hidraw, nitro as _nitro
+from mimarchy import smbus
 from mimarchy.config import Config
-
-DIRECT_MODES = ("Direct", "Static")
 
 #: How long to let the GPU settle between the two halves of a mode transition.
 #: Measured: 0.3 s was enough to make entering a firmware effect reliable, so
 #: 0.4 s is the margin. Only paid on an actual transition, never per frame.
 DIRECT_SETTLE = 0.4
-
-#: Logical mode -> the name each controller uses for it.
-#:
-#: The two controllers expose different sets, so only these five exist on both
-#: and can be driven while CPU and GPU are linked:
-#:
-#:     motherboard  Direct, Off, Static, Breathing, Flashing,
-#:                  Spectrum Cycle, Rainbow, Chase Fade, Chase
-#:     GPU          Static, Rainbow Wave, Runway, Spectrum Cycle,
-#:                  Serial, External Control, Off
-#:
-#: `static` maps to the board's *Direct*, not its *Static*: Direct is the
-#: per-LED SDK path that actually works here, while the board's Static takes a
-#: single mode-colour. The GPU has no Direct and its Static does accept SDK
-#: colours, so the two differ by name but behave the same.
-LOGICAL_MODES: dict[str, dict[str, str]] = {
-    "static":   {"motherboard": "Direct",         "gpu": "Static"},
-    "rainbow":  {"motherboard": "Rainbow",        "gpu": "Rainbow Wave"},
-    "spectrum": {"motherboard": "Spectrum Cycle", "gpu": "Spectrum Cycle"},
-    "chase":    {"motherboard": "Chase",          "gpu": "Runway"},
-    "off":      {"motherboard": "Off",            "gpu": "Off"},
-}
 
 
 @dataclass
@@ -79,269 +47,181 @@ class ZoneInfo:
 
 
 class RGBError(RuntimeError):
-    """OpenRGB is unreachable or has no controllable device."""
+    """No lighting controller answered, or none matches the config."""
 
 
-def connect(host: str = "127.0.0.1", port: int = 6742,
-            name: str = "mimarchy") -> OpenRGBClient:
-    """An SDK client, or `RGBError` with the command that fixes it.
+def _is_gpu_zone(key: str, cfg) -> bool:
+    """Whether this config zone points at the card rather than the board.
 
-    Shared with `mimarchy-setup`, which connects to the same server to list
-    devices but wants none of the zone preparation below. One copy so the two
-    cannot end up telling the user to start different things.
+    The key is the authority — `mimarchy-setup` suggests `gpu` for the card —
+    and the device string is the fallback, so configs written against the old
+    substring matching (`device = "Sapphire"`) keep routing to the card.
     """
-    try:
-        return OpenRGBClient(address=host, port=port, name=name)
-    except Exception as exc:  # noqa: BLE001 - surfaced to the user as a clear error
-        raise RGBError(
-            f"Can't reach the OpenRGB server on {host}:{port} — is it running? "
-            "Try: systemctl --user start openrgb.service"
-        ) from exc
+    if key == "gpu":
+        return True
+    return any(s in cfg.device.lower()
+               for s in ("sapphire", "nitro", "radeon", "gpu"))
 
 
 class RGBController:
-    """Drives every detected LED controller via a running `openrgb --server`."""
+    """Drives every configured LED controller through its own driver."""
 
-    def __init__(self, config: Config, host: str = "127.0.0.1", port: int = 6742):
+    #: Measured (speed field, seconds per pass) pairs — the single source is
+    #: the Nitro driver's own anchors; see `firmware_speed_for_period`.
+    _PERIOD_ANCHORS = dict(_nitro.SPEED_ANCHORS)
+
+    def __init__(self, config: Config):
         self._config = config
-        self._client = connect(host, port)
+        self._aura: _aura.AuraBoard | None = None
+        self._nitro: _nitro.NitroCard | None = None
+        try:
+            self._aura = _aura.AuraBoard.open()
+        except hidraw.HidError:
+            pass
+        try:
+            self._nitro = _nitro.NitroCard.open()
+        except smbus.I2cError:
+            pass
 
-        if not self._client.devices:
-            raise RGBError("OpenRGB is running but detected no devices.")
+        if self._aura is None and self._nitro is None:
+            raise RGBError(
+                "No lighting controller answered. For the board, the Aura "
+                "hidraw node is root-only until udev/99-mimarchy.rules is "
+                "installed (see README); for the card, a bar that went dark "
+                "suddenly usually needs a cold boot (power off at the PSU). "
+                "Run `mimarchy-setup --list` to see what was found."
+            )
 
-        self._prepare_devices()
+        self._zones: dict[str, tuple[str, _aura.Channel | None]] = {}
+        for key, cfg in config.zones.items():
+            if _is_gpu_zone(key, cfg):
+                if self._nitro is not None:
+                    self._zones[key] = ("nitro", None)
+            elif (self._aura is not None
+                    and 0 <= cfg.zone < len(self._aura.channels)):
+                self._zones[key] = ("aura", self._aura.channels[cfg.zone])
+        # What the card is showing, as far as this process told it: a firmware
+        # effect name, or None while it is under external (rendered) control.
+        # Unknown until the first call below sets it.
+        self._nitro_firmware: str | None = None
+        self._nitro_external: bool | None = None
 
-    def _prepare_devices(self) -> None:
-        """Give each configured zone its length. Deliberately does *not* touch
-        the mode.
-
-        Zone sizing has to happen on connect — addressable zones come up at
-        `leds=0` and silently swallow colour writes (see the module docstring).
-        Mode is a different matter: forcing a direct-drive mode here would reset
-        the user's chosen effect every time a client connected. The daemon drives
-        modes explicitly instead.
-
-        Only the configured zones, and each to its own length. Resizing every
-        zone on every device to one global number was harmless on a rig where
-        the only two zones were both ours, but OpenRGB drives keyboards, RAM and
-        case fans on the same server — and reshaping a stranger's keyboard
-        because it happens to be plugged in is not this program's business.
-        """
-        resized = False
-        for key, (_device, zone) in self._targets().items():
-            wanted = self._config.leds_for(key)
-            # Fixed-length zones (e.g. the GPU's single LED) reject resizing;
-            # only addressable strips need — or accept — it.
-            #
-            # `!=` rather than `<`: growing was all that was ever needed while
-            # the configured length overshot the strip, but shrinking has to
-            # work too. With `<`, lowering the length to the strip's real value
-            # silently did nothing, and a rainbow kept spanning slots that drive
-            # no LED — which is what made rainbow indistinguishable from
-            # spectrum.
-            if len(zone.leds) != wanted:
+    def close(self) -> None:
+        for dev in (self._aura, self._nitro):
+            if dev is not None:
                 try:
-                    zone.resize(wanted)
-                    resized = True
-                except Exception:  # noqa: BLE001 - not an addressable zone
+                    dev.close()
+                except Exception:  # noqa: BLE001 - close is best-effort
                     pass
 
-        if resized:
-            # Zone objects hold stale LED lists after a resize; reconnect so the
-            # client re-reads the device layout.
-            self._client.clear()
-            self._client.update()
+    def __enter__(self) -> "RGBController":
+        return self
 
-    def _targets(self) -> dict[str, tuple[object, object]]:
-        """Map config zone name -> (device, zone), matching on device substring."""
-        found: dict[str, tuple[object, object]] = {}
-        for key, cfg in self._config.zones.items():
-            for device in self._client.devices:
-                if cfg.device.lower() not in device.name.lower():
-                    continue
-                if cfg.zone < len(device.zones):
-                    found[key] = (device, device.zones[cfg.zone])
-                break
-        return found
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
     def list_zones(self) -> list[ZoneInfo]:
-        return [
-            ZoneInfo(key=key, label=key.replace("_", " "),
-                     device_name=device.name, led_count=len(zone.leds))
-            for key, (device, zone) in self._targets().items()
-        ]
+        infos = []
+        for key, (kind, channel) in self._zones.items():
+            if kind == "nitro":
+                infos.append(ZoneInfo(key=key, label=key.replace("_", " "),
+                                      device_name="Sapphire Nitro Glow V3",
+                                      led_count=1))
+            else:
+                assert channel is not None
+                infos.append(ZoneInfo(key=key, label=key.replace("_", " "),
+                                      device_name=channel.name,
+                                      led_count=self._config.leds_for(key)))
+        return infos
 
     def _resolve(self, logical_name: str):
-        targets = self._targets()
-        if logical_name not in targets:
+        try:
+            return self._zones[logical_name]
+        except KeyError:
             raise KeyError(
                 f"No detected hardware for zone {logical_name!r}. "
-                f"Available: {list(targets)}"
-            )
-        return targets[logical_name]
-
-    def _kind(self, device) -> str:
-        """Which side of the LOGICAL_MODES table this device sits on.
-
-        Decided by which dialect's mode names the device actually exposes, not
-        by its own name. `radeon` in the name was true of the one card here and
-        is not a property of anything: a GeForce or an Intel card speaking the
-        same `Rainbow Wave` / `Runway` vocabulary would have been read as a
-        motherboard, and every spatial effect it can do would have been quietly
-        unavailable — no error, just a card that never gets handed a firmware
-        mode.
-
-        Counting matches gets both of this rig's controllers right for the same
-        reason it did before (the board offers 5 of the motherboard names and 3
-        of the GPU ones; the card 5 and 2), so the name check survives only as
-        the tie-break, which is also what answers a device reporting no modes at
-        all.
-        """
-        names = {mode.name.lower() for mode in device.modes}
-        score = {
-            kind: sum(1 for m in LOGICAL_MODES.values() if m[kind].lower() in names)
-            for kind in ("motherboard", "gpu")
-        }
-        if score["gpu"] != score["motherboard"]:
-            return max(score, key=score.__getitem__)
-        return "gpu" if "radeon" in device.name.lower() else "motherboard"
-
-    def _ensure_direct(self, device, force: bool = False) -> None:
-        """Park `device` in whichever direct-drive mode it has.
-
-        `force` re-sends even when the client already believes the device is
-        there — which is necessary, because that belief is not reliable on the
-        GPU (see `prepare_zone_for_direct_render`).
-        """
-        mode_names = [m.name for m in device.modes]
-        for candidate in DIRECT_MODES:
-            if candidate in mode_names:
-                if force or device.modes[device.active_mode].name != candidate:
-                    device.set_mode(candidate)
-                return
+                f"Available: {list(self._zones)}"
+            ) from None
 
     def available_modes(self, logical_name: str) -> list[str]:
-        """Logical modes this target can do, in menu order."""
-        device, _ = self._resolve(logical_name)
-        kind = self._kind(device)
-        names = {m.name for m in device.modes}
-        return [k for k, m in LOGICAL_MODES.items() if m[kind] in names]
-
-    def _mode_object(self, device, name: str):
-        for m in device.modes:
-            if m.name.lower() == name.lower():
-                return m
-        raise ValueError(f"{device.name} has no mode {name!r}")
+        """Firmware effects this target can run itself, in menu order."""
+        kind, _ = self._resolve(logical_name)
+        if kind != "nitro":
+            # The board only speaks Direct — every Aura frame is rendered.
+            return []
+        return [*_nitro.MODE_FOR_EFFECT, "off"]
 
     def mode_speed_range(self, logical_name: str,
                          logical_mode: str) -> tuple[int, int] | None:
         """(min, max) for a mode's speed, or None if it has no speed control.
 
-        The bounds are whatever the device reports and are *not* normalised:
-        the GPU describes Spectrum Cycle as min=30 max=1, i.e. reversed, where
-        a lower number is faster. Callers should treat the pair as an interval
+        The bounds are whatever the controller documents and are *not*
+        normalised: Spectrum Cycle runs min=30 max=1, i.e. reversed, where a
+        lower number is faster. Callers should treat the pair as an interval
         and not assume min < max.
         """
-        device, _ = self._resolve(logical_name)
-        name = self._device_mode_name(device, logical_mode)
-        if name is None:
+        kind, _ = self._resolve(logical_name)
+        if kind != "nitro":
             return None
-        mode = self._mode_object(device, name)
-        lo, hi = getattr(mode, "speed_min", None), getattr(mode, "speed_max", None)
-        if lo is None or hi is None or getattr(mode, "speed", None) is None:
+        entry = _nitro.MODE_FOR_EFFECT.get(logical_mode)
+        if entry is None:
             return None
+        _, _, lo, hi = entry
         return (lo, hi)
-
-    def _device_mode_name(self, device, logical_mode: str) -> str | None:
-        kind = self._kind(device)
-        return LOGICAL_MODES.get(logical_mode, {}).get(kind)
 
     def set_mode(self, logical_name: str, logical_mode: str,
                  colour: tuple[int, int, int] | None = None,
                  speed: int | None = None) -> None:
-        """Apply a mode, sending its parameters rather than just its name.
+        """Run a firmware effect on the card's own clock.
 
-        `set_mode` accepts a ModeData object and packs its fields, so mutating
-        the mode before passing it is how colour and speed actually reach the
-        device. Passing only a name sends whatever the mode already held —
-        which is why Chase appeared broken: the board reports Chase (and
-        Breathing, Flashing, Chase Fade) with `colors=[black]`, so it ran
-        correctly and chased black.
+        Colour is accepted and ignored: every firmware effect on this card
+        picks its own colours, which is exactly why the link keeps
+        colour-carrying effects rendered instead of handing them over (see
+        `lightd.plan`). Speed goes first, then the mode — the controller
+        latches the rate register on entry, so the reverse order runs one
+        pass at the old rate.
+
+        Firmware effect -> firmware effect is dropped roughly half the time
+        on this card. Passing through external control first fixes it. Filmed
+        and counted — Rainbow Wave to Runway landed 2 of 5 times direct,
+        5 of 5 with this bounce; 0.3 s was enough, so 0.4 s is the margin.
         """
-        device, _ = self._resolve(logical_name)
-        name = self._device_mode_name(device, logical_mode)
-        if name is None:
+        kind, _ = self._resolve(logical_name)
+        if kind != "nitro":
             raise ValueError(
                 f"{logical_name} has no mode {logical_mode!r}; "
                 f"available: {self.available_modes(logical_name)}"
             )
+        assert self._nitro is not None
+        if logical_mode == "off":
+            mode_val, reg = _nitro.MODE_OFF, None
+        else:
+            entry = _nitro.MODE_FOR_EFFECT.get(logical_mode)
+            if entry is None:
+                raise ValueError(
+                    f"{logical_name} has no mode {logical_mode!r}; "
+                    f"available: {self.available_modes(logical_name)}"
+                )
+            mode_val, reg, _, _ = entry
 
-        def build():
-            mode = self._mode_object(device, name)
-            if colour is not None and getattr(mode, "colors", None):
-                mode.colors = [RGBColor(*colour)] * len(mode.colors)
-            if speed is not None and getattr(mode, "speed", None) is not None:
-                mode.speed = speed
-            return mode
-
-        # Firmware effect -> firmware effect is dropped roughly half the time on
-        # the GPU, and the retry below cannot catch it: OpenRGB reports the new
-        # mode as active while the card visibly carries on running the old one.
-        # Passing through a direct-drive mode first fixes it. Filmed and counted
-        # -- Rainbow Wave to Runway landed 2 of 5 times direct, 5 of 5 with this
-        # bounce; 0.3s was enough, so 0.4s is the margin.
-        current = device.modes[device.active_mode].name
-        if (name not in DIRECT_MODES and current not in DIRECT_MODES
-                and current.lower() != name.lower()):
-            self._ensure_direct(device)
+        if (self._nitro_firmware is not None
+                and self._nitro_firmware != logical_mode):
+            self._nitro.set_external(True)
             time.sleep(DIRECT_SETTLE)
 
-        # Apply, then confirm and re-send once if it didn't take.
+        # Send the effect exactly ONCE.
         #
-        # The motherboard intermittently ignores the first mode packet, which is
-        # what made it look like every mode needed pressing twice. Retrying here
-        # means the user doesn't have to. `update()` first: the client caches
-        # active_mode, so without a resync the check would pass against stale
-        # state — and note a *newly connected* client reports active_mode=0,
-        # which on this board is "Direct", so a bare readback can invent a mode
-        # change that never happened.
-        # Send an effect mode exactly ONCE.
-        #
-        # A direct mode is stateless and safe to repeat, which is what makes the
-        # settle-and-resend in `prepare_zone_for_direct_render` work. Repeating
-        # an *effect* mode is not obviously safe — a second packet mid-transition
-        # could plausibly restart or abort it — so this does not do it, matching
-        # the behaviour that measured about 14 successes in 15 attempts.
-        #
-        # Not a proven hazard: an attempt at re-sending here coincided with a run
-        # of total entry failure, but the card had already dropped off the I2C
-        # bus by then, so the two cannot be separated. Left as single-send
-        # because that is the version with evidence behind it, not because the
-        # alternative was shown to be worse.
-        device.set_mode(build())
-
-        for _ in range(2):
-            try:
-                device.update()
-            except Exception:  # noqa: BLE001 - resync is best-effort
-                return
-            if device.modes[device.active_mode].name.lower() == name.lower():
-                return
-            device.set_mode(build())
-
-    #: Measured (speed field, seconds per pass) pairs, from filming the bar and
-    #: timing a full traversal. Two anchors per mode is enough because rate goes as
-    #: a power of the field, so two points fix the exponent.
-    #:
-    #: Measured on the RX 9070 XT and applied to whatever else turns up, because
-    #: the alternative is not asking the firmware for a rate at all. The result
-    #: on unmeasured hardware is an approximation clamped to that device's own
-    #: reported range — a firmware effect running at the wrong speed rather than
-    #: a firmware effect that never runs.
-    _PERIOD_ANCHORS = {
-        "rainbow": ((10, 0.61), (250, 10.63)),
-        "chase": ((5, 1.26), (50, 10.83)),
-    }
+        # External control is stateless and safe to repeat, which is what makes
+        # the settle-and-resend in `prepare_zone_for_direct_render` work.
+        # Repeating an *effect* mode is not obviously safe — a second write
+        # mid-transition could plausibly restart or abort it — so this does
+        # not do it, matching the behaviour with evidence behind it.
+        self._nitro.set_external(False)
+        if speed is not None and reg is not None:
+            self._nitro.set_speed(reg, speed)
+        self._nitro.set_mode(mode_val)
+        self._nitro_firmware = logical_mode
+        self._nitro_external = False
 
     def firmware_speed_for_period(self, logical_name: str, logical_mode: str,
                                   seconds: float) -> int | None:
@@ -375,37 +255,51 @@ class RGBController:
         return int(round(max(lo, min(hi, field))))
 
     def prepare_zone_for_direct_render(self, logical_name: str) -> None:
-        """Direct-drive just this zone's device, leaving the others alone.
+        """Put just this zone's controller under external control.
 
         Per-zone rather than blanket, so that one device can run a firmware
-        effect while another is rendered without being dragged out of it.
+        effect while another is rendered without being dragged out of it. A
+        no-op for Aura zones: the board only speaks Direct, so there is
+        nothing to park.
 
         *Leaving* a firmware effect is far less reliable than entering one: a
-        single request was dropped 5 times out of 5 on the GPU, which is what
-        left it stuck animating rainbow while the strip had already moved on to
-        the next effect. The client reports Static as active either way, so
-        there is nothing to check — the fix is to send it, let the card settle,
-        and send it again unconditionally.
+        single request was dropped 5 times out of 5 on the card, which is what
+        left it stuck animating rainbow while the strip had already moved on
+        to the next effect. There is nothing to check — the fix is to send it,
+        let the card settle, and send it again unconditionally.
         """
-        device, _ = self._resolve(logical_name)
-        leaving_effect = device.modes[device.active_mode].name not in DIRECT_MODES
-        self._ensure_direct(device)
-        if leaving_effect:
-            time.sleep(DIRECT_SETTLE)
-            self._ensure_direct(device, force=True)
+        kind, _ = self._resolve(logical_name)
+        if kind != "nitro":
+            return
+        assert self._nitro is not None
+        self._nitro.set_external(True)
+        time.sleep(DIRECT_SETTLE)
+        self._nitro.set_external(True)
+        self._nitro_external = True
+        self._nitro_firmware = None
 
     def write_frame(self, logical_name: str,
                     frame: list[tuple[int, int, int]]) -> None:
-        """Push one rendered frame to a zone.
-
-        `fast=True` skips waiting for a reply. At 30 fps the round-trip would
-        otherwise dominate the frame budget, and a dropped frame is invisible.
-        """
-        _, zone = self._resolve(logical_name)
-        leds = len(zone.leds)
+        """Push one rendered frame to a zone."""
+        kind, channel = self._resolve(logical_name)
+        if kind == "nitro":
+            assert self._nitro is not None
+            if not frame:
+                return
+            # One controllable LED: the frame's head pixel is the whole zone.
+            # External control is ensured, not assumed — a card left in a
+            # firmware effect would otherwise ignore every colour sent.
+            if self._nitro_external is not True:
+                self._nitro.set_external(True)
+                self._nitro_external = True
+                self._nitro_firmware = None
+            r, g, b = (int(c) for c in frame[0])
+            self._nitro.set_colour((r, g, b))
+            return
+        assert self._aura is not None and channel is not None
+        leds = self._config.leds_for(logical_name)
         if not leds:
             return
         if len(frame) < leds:
             frame = list(frame) + [frame[-1]] * (leds - len(frame))
-        zone.set_colors([RGBColor(*c) for c in frame[:leds]], fast=True)
-
+        self._aura.set_channel(channel, list(frame[:leds]))

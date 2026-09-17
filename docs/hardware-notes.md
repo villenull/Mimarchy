@@ -7,31 +7,32 @@ For what Mimarchy is and how to install it, see the [README](../README.md).
 
 ## ARGB
 
-**Zone sizing is mandatory.** Addressable zones report `leds=0` — OpenRGB has no
-way to know how long a strip is — and writing a colour to a zero-length zone
-silently does nothing. No error, no effect. Every zone is resized to
-`rgb.zone_size` on connect. This single detail is the difference between
-"OpenRGB doesn't support this board" and working control.
+**Zone sizing is configuration, not negotiation.** A strip shows whatever
+frames arrive, so the backend has to know how many LEDs to render for. Every
+zone renders `leds_for` LEDs — the zone's own `leds` when set, else
+`[rgb] zone_size` (15).
 
 Set it to the strip's *real* length. Too short leaves the tail dark; too long is
 worse than it sounds, because spatial effects span the zone rather than the LEDs
 — at 60 on a 15-LED strip, rainbow shows a quarter of the hue wheel and is
 indistinguishable from spectrum.
 
-**Colour only sticks in a direct-drive mode** (`Direct` on the board, `Static` on
-the GPU). In an effect mode the controller keeps running its own animation and
-ignores the SDK entirely.
+**Colour is written in a direct-drive mode.** `mimarchy/aura.py` puts the
+board's channels in Direct and `mimarchy/nitro.py` puts the card in
+External Control before writing colours; a controller left in an effect mode
+keeps running its own animation and ignores the frame.
 
 **Two independent controllers.** The motherboard's Aura chip is USB HID
-(`0b05:19af`); the GPU has its own reached over I2C *on the card* (`/dev/i2c-7`,
-address `0x28`). Different hardware, different buses.
+(`0b05:19af`, `src/mimarchy/aura.py`); the GPU has its own reached over I2C
+*on the card* (`/dev/i2c-7`, address `0x28`, `src/mimarchy/nitro.py`).
+Different hardware, different buses.
 
-**If the card vanishes from OpenRGB, check the bus before anything else.**
+**If the card vanishes, check the bus before anything else.**
 In September 2026 the card's LED controller stopped answering at `0x28` — on
 the OEM bus and on every other bus the card exposes — across a warm reboot,
-while the amdgpu adapter, the detector list and the kernel's I2C messages were
-all unchanged. The detector is one `read_byte(0x28)`, so the same question
-can be asked by hand without OpenRGB, in a few milliseconds:
+while the amdgpu adapter and the kernel's I2C messages were unchanged.
+Presence is one `read_byte(0x28)`, so the same question can be asked by hand,
+in a few milliseconds:
 
     i2cdetect -y -r 7 0x28 0x28     # `28` = the controller answers; `--` = silent
 
@@ -47,38 +48,18 @@ the card, not an input — so no motherboard header can drive the card's LEDs, a
 I2C is the only route. Verified physically: rewiring the GPU onto the motherboard
 chain changed nothing, and blacking out every motherboard zone left the GPU lit.
 
-## Keep OpenRGB's detector list narrow
+## Why there is no detector list anymore
 
-OpenRGB's broad GPU/I2C detection has been reported to hard-freeze systems with
-this card ([#4888](https://gitlab.com/CalcProgrammer1/OpenRGB/-/issues/4888),
-open). Enabling only the detector matching the exact card is safe here. All 1953
-are disabled except four:
-
-    ASUS Aura Addressable, ASUS Aura Core, ASUS Aura Motherboard,
-    Sapphire Radeon RX 9070 XT Nitro+
-
-`tools/restrict-openrgb-detectors.py` applies that set and `--check` verifies it.
-`install.sh` runs it *before* the server ever starts, which is the order that
-matters — the service starts at login, so an unrestricted config means a freeze
-on every boot. **Re-run it after opening the OpenRGB GUI**, which rewrites the
-config and can re-enable everything.
-
-Those four are this machine's, not the tool's: the allowlist comes from the
-devices in `config.toml`, which `mimarchy-setup` fills in from what OpenRGB
-detects. Working out which detector produced which device is guesswork, because
-OpenRGB never says — the SDK reports device names and the config file lists
-detector names, with no shared id, and the only way to ask directly is to run
-detection, which is the dangerous act. So the matching in `mimarchy/detectors.py`
-is deliberately timid: a device name that matches two detectors without matching
-either exactly is refused rather than guessed at, since a missed detector is a
-dark zone somebody reports and a spurious one is a locked-up desktop nobody can.
-`detectors = [...]` in `config.toml` overrides the lot.
-
-There is one unavoidable chicken-and-egg in this. The list is narrowed before the
-server first starts, so a machine whose hardware was never in that narrow set
-sees no devices at all — and nothing can be selected that was never detected.
-`--discover` re-enables everything for one detection pass, behind a typed
-confirmation, which is the same state a stock OpenRGB install is in permanently.
+Up to 0.4.5 the lighting went through the OpenRGB SDK server, and its broad
+GPU/I2C detection could hard-freeze this machine
+([#4888](https://gitlab.com/CalcProgrammer1/OpenRGB/-/issues/4888), open) —
+so the install narrowed its detector list before the server ever started,
+and the config carried a `detectors = [...]` allowlist. Since 0.5.0 both
+controllers are driven directly (`src/mimarchy/aura.py` over hidraw,
+`src/mimarchy/nitro.py` over I2C), which only ever touches the board's own
+USB device and the card's own bus: there is nothing to narrow and no server
+to order around. `load_config` still tolerates old files that contain a
+`detectors` key, and ignores it.
 
 ## Effects are rendered in software, not by the controllers
 
@@ -102,11 +83,11 @@ freezes the LEDs on their last frame.
 
 **What the stream costs, measured.** The render is not the cost; the I2C
 write to the card's controller is. Each write is a transaction the amdgpu
-driver bit-bangs with busy-waits — about 1.5 ms of CPU in `openrgb` per
-write — while the board's USB writes are nearly free. Measured on the same
-effect (`unhinged`, every frame different) at 30 fps:
+driver bit-bangs with busy-waits — about 1.5 ms of CPU per write — while the
+board's USB writes are nearly free. Measured on the same effect (`unhinged`,
+every frame different) at 30 fps:
 
-| Configuration | `openrgb` CPU |
+| Configuration | CPU |
 |---|---|
 | board + card, every frame sent (≤ 0.4.3) | 5.1 % of one core |
 | board + card, unchanged frames skipped (0.4.4) | 3.5 % |
@@ -191,17 +172,11 @@ runs at sigma 0.02 and 0.04. Sending frames faster does not shorten it.
 
 ## Testing without the hardware
 
-`tools/fake-openrgb-server.py` is a stub SDK server that serves a board, a
-one-LED GPU and a third strip, so the whole stack can be exercised on a machine
-that has none of them:
-
-```bash
-tools/fake-openrgb-server.py 6788 &
-mimarchy-setup --list --port 6788
-mimarchy-setup --port 6788      # writes a config against those devices
-mimarchy-lightd --once          # logs the resizes and frame writes it performs
-```
-
-It logs what it receives, so a zone resized to the wrong length or a frame sent
-to the wrong device is visible directly. It speaks the handshake, the two
-enumeration packets, and writes — anything past that needs adding to it.
+There is no stub backend. On a machine without the hardware,
+`mimarchy-setup --list` reports what the drivers find (nothing, without the
+devices — the board's side lives in `src/mimarchy/aura.py`, the card's in
+`src/mimarchy/nitro.py`), and `mimarchy-lightd --once` logs the frames it
+would write. Daemon liveness is a pidfile singleton under `$XDG_RUNTIME_DIR`
+(`mimarchy-lightd.pid`, `mimarchy-displayd.pid`); a daemon that exits because
+no device answered leaves a one-line user action in `mimarchy-<name>.note`
+beside it, which `mimarchy-ctl status` surfaces as `daemon_note`.

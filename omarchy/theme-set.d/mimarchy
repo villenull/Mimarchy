@@ -2,9 +2,11 @@
 
 # Re-point Mimarchy's theme-following LED colours at the theme just selected.
 #
-# Install by copying (or symlinking) into ~/.config/omarchy/hooks/theme-set.d/.
-# `omarchy-theme-set` runs every executable in that directory after it has
-# swapped the active theme, with the theme's name as $1.
+# lightd keeps a symlink at ~/.config/omarchy/hooks/theme-set.d/mimarchy
+# pointing here, so `omarchy-theme-set` runs this after every theme swap with
+# the theme's name as $1. A plain copy works too: the lookup below resolves
+# this file's real path rather than the symlink, so either way the backend is
+# found relative to this checkout.
 #
 # The name is deliberately unused. `mimarchy-ctl reload-theme` reads the active
 # theme through the same symlink everything else does, so passing the name would
@@ -22,8 +24,12 @@
 # config went missing; the desktop's theme still changed, which is what the user
 # asked for.
 
-command -v mimarchy-ctl >/dev/null 2>&1 || exit 0
+# Self-locating: realpath follows the ~/.config symlink back to this checkout,
+# so ../../bin lands on the repo's launchers whether Omarchy runs the link or
+# a copy. The system interpreter is named outright — bin/ is never on PATH.
+CTL="$(dirname "$(realpath "$0")")/../../bin/mimarchy-ctl"
+[ -x "$CTL" ] || exit 0
 
-timeout 5s mimarchy-ctl reload-theme >/dev/null 2>&1 &
+timeout 5s /usr/bin/python3 "$CTL" reload-theme >/dev/null 2>&1 &
 
 exit 0

@@ -163,10 +163,10 @@ class TestStateRoundTrip:
 
 @pytest.fixture
 def ctl_env(tmp_path, monkeypatch):
-    """`mimarchy-ctl` pointed at temp state, with no systemd and no sensors."""
+    """`mimarchy-ctl` pointed at temp state, with no daemons and no sensors."""
     monkeypatch.setattr(lightstate, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(lightstate, "PERSIST_PATH", tmp_path / "persist.json")
-    monkeypatch.setattr(ctl, "unit_active", lambda unit: False)
+    monkeypatch.setattr(ctl, "daemon_alive", lambda unit: False)
     monkeypatch.setattr(ctl, "snapshot", lambda: {})
     monkeypatch.setattr(ctl, "read_cpu_temp", lambda data=None: None)
     monkeypatch.setattr(ctl, "read_gpu_temp", lambda data=None: None)

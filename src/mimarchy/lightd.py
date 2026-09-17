@@ -33,31 +33,32 @@ from mimarchy.effects import (COLOUR_EFFECTS, SPATIAL_EFFECTS,
                               firmware_period, render,
                               unhinged_firmware_phase)
 from mimarchy.rgb import RGBController, RGBError
+from mimarchy.service import (UDEV_NOTE, claim_pidfile, clear_note, ensure_theme_hook,
+                              owner_pid, write_note)
 
 #: The board tops out around 60 fps for a 60-LED write (measured 15.9 ms/frame).
 #: 30 leaves comfortable headroom and is smooth for these effects.
 FPS = 30
 
-#: How long to keep asking OpenRGB for a configured zone that is absent when
-#: the daemon starts, before settling for the zones that are there.
+#: How long to keep opening controllers for a configured zone that is absent
+#: when the daemon starts, before settling for the zones that are there.
 #:
-#: Two different absences look identical at startup. OpenRGB's SDK listener
-#: opens before its detection pass has finished, so a daemon that connects
-#: early can be handed a device list with the slow-to-detect controllers not
-#: in it yet; that one resolves itself in seconds. A controller that has
-#: genuinely gone — the graphics card in the September 2026 incident, whose
-#: LED microcontroller dropped off its I2C bus and stayed off — never
-#: resolves. Polling for a bounded window tells the two apart: the first is
-#: caught by the second or third look, and the second costs one delayed start
-#: and a plain line in the journal rather than a zone that is silently dark
-#: for a week. After the window the daemon runs with whatever it found, since
-#: the zones that *were* detected are still worth lighting.
+#: Two different absences look identical at startup. A controller that answers
+#: late — the card's microcontroller still coming up after boot, the board's
+#: hidraw node appearing a moment after the daemon — resolves itself in
+#: seconds. A controller that has genuinely gone — the graphics card in the
+#: September 2026 incident, whose LED microcontroller dropped off its I2C bus
+#: and stayed off — never resolves. Polling for a bounded window tells the two
+#: apart: the first is caught by the second or third look, and the second costs
+#: one delayed start and a plain line in the journal rather than a zone that is
+#: silently dark for a week. After the window the daemon runs with whatever it
+#: found, since the zones that *were* detected are still worth lighting.
 MISSING_ZONE_GRACE = 20.0
 MISSING_ZONE_POLL = 4.0
 
 #: How often a frame identical to the last one sent is re-sent anyway.
 #:
-#: Measured on the reference rig: `openrgb` costs about 4 % of one core while
+#: Measured on the reference rig: the daemon costs about 4 % of one core while
 #: the card is driven at 30 fps and 0.3 % without the card, on the same
 #: effects — the I2C write to the card's controller is the expensive part,
 #: not the render. A one-LED zone under `static` was receiving the same colour
@@ -79,9 +80,9 @@ FRAME_REFRESH = 1.0
 ONE_LED_FPS = 10.0
 
 #: How long every render write may fail continuously before the daemon exits.
-#: Long enough to ride out any transient — OpenRGB restarting under systemd
-#: takes a couple of seconds — and short enough that a dead server is noticed
-#: while someone is still looking at the frozen LEDs.
+#: Long enough to ride out any transient — a controller re-enumerating after
+#: a suspend takes a couple of seconds — and short enough that dead LEDs are
+#: noticed while someone is still looking at them.
 WRITE_FAILURE_WINDOW = 5.0
 
 
@@ -90,18 +91,18 @@ class WriteFailureWatch:
 
     write_frame failures are swallowed per frame on purpose — one dropped
     frame is invisible, and exiting on it would flap the service. But the
-    swallow hid the opposite case too: when the OpenRGB server goes away
-    (crash, restart, an OOM kill), every write fails from then on, the client
-    library never repairs its socket, and the daemon kept rendering into it
-    forever — LEDs frozen, service green.
+    swallow hid the opposite case too: when a controller goes away (the card
+    dropping off its I2C bus, the board's hidraw node vanishing on a
+    re-plug), every write fails from then on, and the daemon kept rendering
+    into it forever — LEDs frozen, service green.
 
     This draws the line between the two cases: any successful write resets
     the watch, and only a full WRITE_FAILURE_WINDOW during which *no* write
     succeeded trips it. A frame that attempted nothing proves nothing — an
     all-firmware plan writes no frames — so it neither feeds nor resets the
-    streak, and a dead server is still caught the moment rendering resumes.
+    streak, and dead controllers are still caught the moment rendering resumes.
 
-    Tripping is not handled here. The caller exits, and systemd's Restart=
+    Tripping is not handled here. The caller exits, and the panel's supervision
     brings the daemon back through its normal startup, which reconnects —
     the one recovery path that also re-prepares zones and re-applies state.
     """
@@ -158,7 +159,7 @@ class FrameGate:
 
 
 def missing_zones(config: Config, detected: dict[str, int]) -> list[str]:
-    """Configured zone keys OpenRGB did not produce a device for, in config order."""
+    """Configured zone keys no controller produced a device for, in config order."""
     return [key for key in config.zones if key not in detected]
 
 
@@ -169,9 +170,9 @@ def describe_missing(config: Config, missing: list[str]) -> str:
     for key in missing:
         zone = config.zones[key]
         lines.append(
-            f"zone {key!r} not detected: no OpenRGB device matching "
+            f"zone {key!r} not detected: no hidraw node or I2C bus answered for "
             f"{zone.device!r} (zone {zone.zone}). Check `mimarchy-setup --list`; "
-            "if the device is missing there too, OpenRGB did not detect it — "
+            "if the device is missing there too, the controller never answered — "
             "for a GPU whose controller has dropped off its I2C bus, a cold "
             "boot (power off at the PSU) is the known fix."
         )
@@ -181,14 +182,15 @@ def describe_missing(config: Config, missing: list[str]) -> str:
 def settle_zones(config: Config, connect, *, grace: float = MISSING_ZONE_GRACE,
                  poll: float = MISSING_ZONE_POLL, clock=time.monotonic,
                  sleep=time.sleep):
-    """Connect, and keep reconnecting for up to `grace` seconds while a
+    """Open the controllers, retrying for up to `grace` seconds while a
     configured zone is missing.
 
     Returns the controller and its zone map once every configured zone is
-    present or the window closes. Each look is a fresh connection because the
-    SDK client enumerates devices once, on connect; there is no cheaper way to
-    ask OpenRGB again. `connect` is the controller factory — injected so the
-    tests can hand back a sequence of device lists without a server.
+    present or the window closes. Each look re-opens the controllers from
+    scratch, because a device that is still enumerating at login answers a
+    later open and nothing answers an already-open stale handle. `connect` is
+    the controller factory — injected so the tests can hand back a sequence of
+    device lists without hardware.
     """
     deadline = clock() + grace
     while True:
@@ -278,7 +280,7 @@ def plan(rgb: RGBController, zones: dict[str, int],
     so a hue wave and a travelling head both arrive as a single flat colour,
     which is spectrum and static respectively. That is a real loss of effects
     the card can otherwise do: its own Rainbow Wave and Runway animate across
-    the bar's internal segments, which no amount of SDK writing can reach.
+    the bar's internal segments, which no amount of per-LED writing can reach.
 
     So a spatial effect on a single-LED zone goes to the firmware, and
     everything else is rendered. Phase locking is given up only where it buys
@@ -290,8 +292,8 @@ def plan(rgb: RGBController, zones: dict[str, int],
     colour of its own, and the two cases genuinely differ:
 
     * **rainbow goes to firmware even while linked.** Every firmware effect on
-      this card reports `color_mode=0` and accepts no colour, which is normally
-      disqualifying — but rainbow has no chosen colour to honour. The card's
+    this card picks its own colours, which is normally disqualifying — but
+    rainbow has no chosen colour to honour. The card's
       Rainbow Wave *is* the full hue wheel, the same thing the strip is showing, so
       "the card picks its own colours" describes no actual difference. Rendering it
       instead put one flat hue on a bar with many segments, which reads as spectrum
@@ -352,17 +354,30 @@ def main() -> None:
                     help="render a single frame and exit (for testing)")
     args = ap.parse_args()
 
+    if not claim_pidfile("lightd"):
+        # Another instance owns the slot — a manual start racing the panel's
+        # supervision, usually. Exit 0 with the owner named, so the supervisor
+        # treats this as a clean no-op rather than a crash to back off from.
+        print(f"mimarchy-lightd already running (pid {owner_pid('lightd')})",
+              file=sys.stderr)
+        return
+    clear_note("lightd")
+    ensure_theme_hook()
+
     config = load_config()
     try:
         rgb, zones, missing = settle_zones(config, lambda: RGBController(config))
     except RGBError as exc:
+        write_note("lightd", f"{exc} {UDEV_NOTE}")
         sys.exit(str(exc))
 
     # Written before the zone check below exits, so `status` can say *which*
     # zones were missing even when the answer was all of them.
     detection.save(report_detection(rgb, config, zones))
     if not zones:
-        sys.exit("no controllable zones detected\n" + describe_missing(config, missing))
+        message = "no controllable zones detected\n" + describe_missing(config, missing)
+        write_note("lightd", f"{message.splitlines()[0]} {UDEV_NOTE}")
+        sys.exit(message)
     if missing:
         print(describe_missing(config, missing), file=sys.stderr)
         print(f"rendering the zones that were found: {', '.join(zones)}",
@@ -451,9 +466,11 @@ def main() -> None:
                 failed += 1
 
         if watch.record(t, wrote=wrote, failed=failed):
-            sys.exit(f"no render write has succeeded for {WRITE_FAILURE_WINDOW:g}s"
-                     " — treating the OpenRGB connection as dead and exiting,"
-                     " so systemd restarts this daemon into a fresh one")
+            message = (f"no render write has succeeded for {WRITE_FAILURE_WINDOW:g}s"
+                       " — treating the controllers as gone and exiting,"
+                       " so the panel restarts this daemon into fresh opens")
+            write_note("lightd", message)
+            sys.exit(message)
 
         if args.once:
             return

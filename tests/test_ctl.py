@@ -6,9 +6,9 @@ as a wrong bar rather than a stack trace — and the QML itself cannot be tested
 from Python at all. Everything with a decision in it therefore lives on this
 side of the boundary, and gets held down here.
 
-No test touches the real state file, the real config, or systemd: `lightstate`
-is pointed at a temp directory and the unit calls are stubbed, so a run cannot
-disturb the user's lighting or start a service.
+No test touches the real state file, the real config, or a real daemon:
+`lightstate` is pointed at a temp directory and the daemon calls are stubbed,
+so a run cannot disturb the user's lighting or start a process.
 """
 
 from __future__ import annotations
@@ -27,14 +27,14 @@ from mimarchy.effects import SPEED_LEVELS  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
-    """Temp state, no systemd, deterministic sensors."""
+    """Temp state, no daemons, deterministic sensors."""
     monkeypatch.setattr(lightstate, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(lightstate, "PERSIST_PATH", tmp_path / "persist.json")
     # The daemon's detection report lives in the runtime dir too; a test must
     # see the report it wrote itself, never the real daemon's.
     monkeypatch.setattr(detection, "DETECTION_PATH", tmp_path / "detection.json")
-    monkeypatch.setattr(ctl, "unit_active", lambda unit: False)
-    monkeypatch.setattr(ctl, "set_unit", lambda unit, running: None)
+    monkeypatch.setattr(ctl, "daemon_alive", lambda name: False)
+    monkeypatch.setattr(ctl, "read_note", lambda name: None)
     # The readers take an optional pre-read snapshot so `status` spawns
     # `sensors` once rather than three times; the stubs accept it and ignore it.
     monkeypatch.setattr(ctl, "snapshot", lambda: {})
@@ -81,6 +81,13 @@ class TestStatus:
         assert payload["sensors"]["cpu_temp"] == 52.2
         assert payload["display_active"] is False
         assert payload["lighting_active"] is False
+        assert payload["daemon_note"] is None
+
+    def test_status_carries_the_daemon_note(self, capsys, monkeypatch):
+        monkeypatch.setattr(ctl, "read_note", lambda name: "the udev sudo hint")
+        payload = status(capsys)
+
+        assert payload["daemon_note"] == "the udev sudo hint"
 
     def test_speed_is_reported_as_a_readable_stop(self, capsys):
         seed(cpu_fans=("rainbow", SPEED_LEVELS[2]))
@@ -326,39 +333,53 @@ class TestColour:
 
 class TestDisplay:
     def test_toggle_starts_it_when_stopped(self, monkeypatch):
-        calls = []
-        monkeypatch.setattr(ctl, "unit_active", lambda unit: False)
-        monkeypatch.setattr(ctl, "set_unit",
-                            lambda unit, running: calls.append((unit, running)))
+        spawns = []
+        monkeypatch.setattr(ctl, "daemon_script", lambda name: "bin/mimarchy-displayd")
+        monkeypatch.setattr(ctl, "spawn_daemon", lambda *a: spawns.append(a))
+        # The fresh spawn claims its pidfile before the poll notices: first
+        # call (the toggle decision) says stopped, later calls say running.
+        states = iter([False])
+        monkeypatch.setattr(ctl, "daemon_alive",
+                            lambda name: next(states, True))
 
         assert ctl.main(["display", "toggle"]) == 0
-        assert calls == [(ctl.DISPLAY_UNIT, True)]
+        assert len(spawns) == 1
 
     def test_toggle_stops_it_when_running(self, monkeypatch):
-        calls = []
-        monkeypatch.setattr(ctl, "unit_active", lambda unit: True)
-        monkeypatch.setattr(ctl, "set_unit",
-                            lambda unit, running: calls.append((unit, running)))
+        stops = []
+        monkeypatch.setattr(ctl, "daemon_alive", lambda name: True)
+        monkeypatch.setattr(ctl, "stop_daemon",
+                            lambda name: stops.append(name) or None)
 
         assert ctl.main(["display", "toggle"]) == 0
-        assert calls == [(ctl.DISPLAY_UNIT, False)]
+        assert stops == ["displayd"]
 
     def test_setting_it_to_what_it_already_is_touches_nothing(self, monkeypatch):
         """`display on` from a script must not restart a running stream."""
         calls = []
-        monkeypatch.setattr(ctl, "unit_active", lambda unit: True)
-        monkeypatch.setattr(ctl, "set_unit",
-                            lambda unit, running: calls.append((unit, running)))
+        monkeypatch.setattr(ctl, "daemon_alive", lambda name: True)
+        monkeypatch.setattr(ctl, "spawn_daemon",
+                            lambda *a: calls.append(("spawn", a)))
+        monkeypatch.setattr(ctl, "stop_daemon",
+                            lambda *a: calls.append(("stop", a)) or None)
 
         assert ctl.main(["display", "on"]) == 0
         assert calls == []
 
-    def test_a_systemd_failure_is_reported(self, monkeypatch, capsys):
-        monkeypatch.setattr(ctl, "unit_active", lambda unit: False)
-        monkeypatch.setattr(ctl, "set_unit", lambda unit, running: "Unit not found.")
+    def test_a_failed_start_is_reported(self, monkeypatch, capsys):
+        monkeypatch.setattr(ctl, "daemon_alive", lambda name: False)
+        monkeypatch.setattr(ctl, "daemon_script", lambda name: "bin/mimarchy-displayd")
+        monkeypatch.setattr(ctl, "spawn_daemon", lambda *a: None)
 
         assert ctl.main(["display", "on"]) == 1
-        assert "Unit not found." in capsys.readouterr().err
+        assert "did not start" in capsys.readouterr().err
+
+    def test_stopping_reports_the_daemon_error(self, monkeypatch, capsys):
+        monkeypatch.setattr(ctl, "daemon_alive", lambda name: True)
+        monkeypatch.setattr(ctl, "stop_daemon", lambda name: "did not exit")
+
+        assert ctl.main(["display", "off"]) == 1
+        assert "did not exit" in capsys.readouterr().err
 
 
 class TestLink:
@@ -405,10 +426,10 @@ class TestWriteDiscipline:
 
 
 class TestStatusReportsDetection:
-    """`status` says which configured zones OpenRGB actually produced.
+    """`status` says which configured zones answered on their controller.
 
     It used to read the desired state and ask systemd whether the unit was
-    up, which let a card that had not been detected for a week show as
+    up, which let a card that had not answered for a week show as
     `gpu: rainbow` + `lighting: running`. The daemon now leaves a report of
     what it found, and `status` carries it — with "unknown" as the honest
     answer before the daemon has started, rather than "fine".
@@ -447,6 +468,7 @@ class TestStatusReportsDetection:
         out = capsys.readouterr().out
         assert "gpu: NOT DETECTED" in out
         assert "Sapphire Radeon RX 9070 XT Nitro+" in out
+        assert "hidraw node or I2C bus" in out
 
     def test_everything_found_adds_no_noise(self, capsys):
         self._report(missing=False)

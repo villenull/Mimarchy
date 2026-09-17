@@ -122,8 +122,9 @@ def test_nothing_untracked_puts_a_symlink_in_the_tree():
     (`bin/python`, `lib64`, ...; even `--copies` leaves `lib64`), so a `.venv`
     here would fail the real validator — and since `omarchy plugin update`
     re-validates and rolls back, it would quietly make the plugin un-updatable
-    for anyone who installed it as one checkout. That is why `install.sh` builds
-    the venv in ~/.local/share/mimarchy instead.
+    for anyone who installed it as one checkout. That is why there is no
+    install step that builds a venv anywhere near this tree: the backend is
+    stdlib-only and ships in bin/.
 
     Ignored paths are skipped, and only those: a gitignored file cannot reach a
     user's clone, so it cannot reach their plugin folder either. Excluding

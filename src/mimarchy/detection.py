@@ -1,9 +1,9 @@
 """What the lighting daemon found when it last started, for `mimarchy-ctl`.
 
-The daemon is the only process that ever asks OpenRGB which devices exist, and
+The daemon is the only process that ever opens the lighting controllers, and
 until this file existed it kept the answer to itself. `mimarchy-ctl status`
 read the *desired* state file and asked systemd whether the unit was active,
-so a configured zone whose device had vanished from OpenRGB — a graphics card
+so a configured zone whose controller had stopped answering — a graphics card
 whose LED controller dropped off its I2C bus, in the case that prompted this —
 showed up as `gpu: rainbow` and `lighting: running`, both true and neither
 useful. The incident took a week to notice because nothing said "gpu: not
@@ -12,7 +12,7 @@ detected" anywhere a person looks.
 So the daemon now writes down, once per startup, which configured zones it
 found and which it did not, and `status` reports that alongside the rest. Kept
 in the runtime directory like the lighting state: it describes this login's
-OpenRGB, and a reboot re-detects everything anyway.
+controllers, and a reboot re-detects everything anyway.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ DETECTION_PATH = _RUNTIME_DIR / "mimarchy-detection.json"
 class ZoneDetection:
     #: The `device` substring from config.toml — what the user asked for.
     configured_device: str
-    #: The OpenRGB device name it matched, or None when nothing did.
+    #: The controller name it matched, or None when nothing did.
     device_name: str | None = None
     led_count: int = 0
 
