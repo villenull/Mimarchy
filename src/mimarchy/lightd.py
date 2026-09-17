@@ -354,7 +354,11 @@ def main() -> None:
                     help="render a single frame and exit (for testing)")
     args = ap.parse_args()
 
-    if not claim_pidfile("lightd"):
+    # --once is a probe, not a daemon: it must never hold the slot past its
+    # own exit, or every later start reads a stale pid and reports stopped.
+    # Claiming is skipped entirely on that path (a probe racing the daemon
+    # must not steal its pidfile either) — it just renders one frame.
+    if not args.once and not claim_pidfile("lightd"):
         # Another instance owns the slot — a manual start racing the panel's
         # supervision, usually. Exit 0 with the owner named, so the supervisor
         # treats this as a clean no-op rather than a crash to back off from.
@@ -363,6 +367,7 @@ def main() -> None:
         return
     clear_note("lightd")
     ensure_theme_hook()
+
 
     config = load_config()
     try:
