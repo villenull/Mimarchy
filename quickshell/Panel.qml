@@ -47,6 +47,11 @@ Panel {
   // not flicker the panel.
   property bool backendMissing: false
 
+  readonly property bool lightingActive: status ? status.lighting_active === true : false
+  readonly property bool displayActive: status ? status.display_active === true : false
+  readonly property bool linked: status ? status.linked === true : true
+  readonly property int speedStops: status && status.speed_stops ? status.speed_stops : 5
+
   // The backend ships inside this repo: Panel.qml lives in quickshell/, the
   // entry points in bin/. Resolved off this file so the plugin works wherever
   // it is checked out, with no install step and nothing looked up on $PATH.
