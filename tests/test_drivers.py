@@ -15,8 +15,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import pytest  # noqa: E402
-
 from mimarchy import aura, hidraw, nitro  # noqa: E402
+from mimarchy import rgb as rgb_mod  # noqa: E402
 
 
 def _write(path: Path, text: str) -> None:
@@ -225,3 +225,119 @@ def test_hid_device_writes_report_verbatim(tmp_path: Path, monkeypatch) -> None:
     assert len(written) == 1
     assert len(written[0]) == 65
     assert written[0][:2] == bytes((0xEC, 0xB0))
+
+class _FakeBus:
+    """Records SMBus register writes; duck-typed stand-in for I2cBus."""
+
+    def __init__(self) -> None:
+        self.writes: list[tuple[int, int]] = []
+
+    def write_byte_data(self, addr: int, register: int, value: int) -> None:
+        self.writes.append((register, value))
+
+    def close(self) -> None:
+        pass
+
+
+class _FakeNitro:
+    """Duck-typed stand-in for NitroCard: canned nothing, recorded calls."""
+
+    def __init__(self) -> None:
+        self.bus = _FakeBus()
+        self.calls: list[tuple] = []
+
+    def set_external(self, enabled: bool) -> None:
+        self.calls.append(("external", enabled))
+
+    def set_mode(self, mode: int) -> None:
+        self.calls.append(("mode", mode))
+
+    def set_speed(self, register: int, value: int) -> None:
+        self.calls.append(("speed", register, value))
+
+    def set_colour(self, colour: tuple[int, int, int]) -> None:
+        self.calls.append(("colour", tuple(colour)))
+
+    def close(self) -> None:
+        pass
+
+
+def _nitro_only_controller(monkeypatch) -> tuple:
+    """An RGBController with only the GPU zone, behind a fake Nitro card."""
+    from mimarchy.config import Config, RGBZoneConfig
+
+    fake = _FakeNitro()
+    monkeypatch.setattr(nitro.NitroCard, "open",
+                        classmethod(lambda cls, buses=None: fake))
+    monkeypatch.setattr("mimarchy.rgb._aura.AuraBoard.open",
+                        classmethod(lambda cls, *a, **k: (_ for _ in ()).throw(
+                            hidraw.HidError("no board"))))
+    config = Config(zones={"gpu": RGBZoneConfig(device="Sapphire Nitro Glow",
+                                                zone=0)})
+    import mimarchy.rgb as rgb_here
+    controller = rgb_here.RGBController(config)
+    assert isinstance(controller._nitro, _FakeNitro)
+    return controller, fake
+
+
+def test_rendered_colours_use_external_off_plus_custom(monkeypatch) -> None:
+    """The bar only lights register colours with ext off + CUSTOM (0x06).
+
+    Regression: the driver sent `ext=1` for rendered frames, which blanks
+    the bar outright — filmed on this card, where every rendered effect
+    showed a lit strip and a dark bar while the colour registers held live
+    values. `ext=1` is what OpenRGB's External Control mode does, not its
+    Static mode.
+    """
+    controller, fake = _nitro_only_controller(monkeypatch)
+    controller.prepare_zone_for_direct_render("gpu")
+    assert ("external", False) in fake.calls
+    assert ("mode", nitro.MODE_CUSTOM) in fake.calls
+    assert ("external", True) not in fake.calls
+
+
+def test_write_frame_ensures_external_off_not_on(monkeypatch) -> None:
+    """A frame must never re-blank the bar it is about to colour."""
+    controller, fake = _nitro_only_controller(monkeypatch)
+    controller.write_frame("gpu", [(255, 0, 0)])
+    assert ("external", False) in fake.calls
+    assert ("mode", nitro.MODE_CUSTOM) in fake.calls
+    assert ("colour", (255, 0, 0)) in fake.calls
+    assert ("external", True) not in fake.calls
+
+
+def test_firmware_entry_clears_external_before_the_mode(monkeypatch) -> None:
+    """Entering firmware leaves ext off + CUSTOM behind, never ext on."""
+    controller, fake = _nitro_only_controller(monkeypatch)
+    controller.prepare_zone_for_direct_render("gpu")
+    fake.calls.clear()
+    controller.set_mode("gpu", "rainbow", speed=11)
+    ext_off = fake.calls.index(("external", False))
+    modes = [i for i, c in enumerate(fake.calls) if c[0] == "mode"]
+    assert modes and ext_off < modes[0]
+    assert ("external", True) not in [
+        c for c in fake.calls if c[0] == "external"
+        and fake.calls.index(c) >= ext_off]
+    assert fake.calls[modes[0]] == ("mode", nitro.MODE_RAINBOW)
+
+def test_firmware_to_firmware_bounce_passes_through_off_plus_custom(
+        monkeypatch) -> None:
+    """A firmware effect entered from another firmware effect still lands.
+
+    The card drops a direct firmware-to-firmware switch about half the time,
+    so the driver bounces through external control first — and the bounce
+    must leave ext off + CUSTOM behind, the combination rendered colours
+    show in, never ext on (which blanks the bar).
+    """
+    controller, fake = _nitro_only_controller(monkeypatch)
+    controller.prepare_zone_for_direct_render("gpu")
+    fake.calls.clear()
+    controller.set_mode("gpu", "rainbow", speed=11)
+    fake.calls.clear()
+    controller.set_mode("gpu", "chase", speed=5)
+    assert fake.calls[0] == ("external", True)
+    rest = fake.calls[1:]
+    ext_off = rest.index(("external", False))
+    custom = rest.index(("mode", nitro.MODE_CUSTOM))
+    runway = rest.index(("mode", nitro.MODE_RUNWAY))
+    assert ext_off < custom < runway

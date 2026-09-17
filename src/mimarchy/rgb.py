@@ -12,9 +12,12 @@ Three non-obvious things this handles, all learned the hard way here:
 1. Addressable (ARGB) strips have no length until told. A strip shows whatever
    frames arrive, so the render length comes from `config.toml`, and a
    zero-length zone is skipped rather than written to no effect.
-2. Rendered colours only show while the Nitro card is in external control.
-   In a firmware effect mode the controller runs its own animation and ignores
-   colour writes, so entering and leaving firmware is explicit.
+2. Rendered colours show only with the Nitro card's external control off
+   and its mode on CUSTOM (0x06). `ext=1` blanks the bar whatever the
+   colour registers hold — filmed, not inferred — which is also what
+   OpenRGB's External Control mode does. In a firmware effect mode the
+   controller likewise runs its own animation and ignores colour writes,
+   so entering and leaving firmware is explicit.
 3. Only narrow buses are ever probed — see `mimarchy.nitro` for why a broad
    I2C scan is not on the table.
 """
@@ -177,9 +180,12 @@ class RGBController:
         Colour is accepted and ignored: every firmware effect on this card
         picks its own colours, which is exactly why the link keeps
         colour-carrying effects rendered instead of handing them over (see
-        `lightd.plan`). Speed goes first, then the mode — the controller
-        latches the rate register on entry, so the reverse order runs one
-        pass at the old rate.
+        `lightd.plan`). External control goes off before the mode — the bar
+        only lights rendered colours with ext off + CUSTOM, so leaving it on
+        blanks the bar and leaving a stale firmware value in the mode
+        register risks the wrong animation. Speed goes first, then the
+        mode — the controller latches the rate register on entry, so the
+        reverse order runs one pass at the old rate.
 
         Firmware effect -> firmware effect is dropped roughly half the time
         on this card. Passing through external control first fixes it. Filmed
@@ -207,6 +213,9 @@ class RGBController:
         if (self._nitro_firmware is not None
                 and self._nitro_firmware != logical_mode):
             self._nitro.set_external(True)
+            time.sleep(DIRECT_SETTLE)
+            self._nitro.set_external(False)
+            self._nitro.set_mode(_nitro.MODE_CUSTOM)
             time.sleep(DIRECT_SETTLE)
 
         # Send the effect exactly ONCE.
@@ -255,19 +264,24 @@ class RGBController:
         return int(round(max(lo, min(hi, field))))
 
     def prepare_zone_for_direct_render(self, logical_name: str) -> None:
-        """Put just this zone's controller under external control.
+        """Put just this zone's controller where rendered colours show.
 
         Per-zone rather than blanket, so that one device can run a firmware
         effect while another is rendered without being dragged out of it. For
         an Aura zone this re-sends the Direct-entry packet, since another tool
         (or a reboot) can leave the board in a firmware effect that ignores
         direct frames; the open path already sent it once (see `aura.py`).
+        For the card that means external control *off* plus mode CUSTOM:
+        the bar only lights register colours in that combination — `ext=1`
+        blanks it outright (filmed), which is also what OpenRGB's External
+        Control mode is.
 
         *Leaving* a firmware effect is far less reliable than entering one: a
         single request was dropped 5 times out of 5 on the card, which is what
         left it stuck animating rainbow while the strip had already moved on
-        to the next effect. There is nothing to check — the fix is to send it,
-        let the card settle, and send it again unconditionally.
+        to the next effect. There is nothing to check — the fix is to send the
+        off + CUSTOM pair, let the card settle, and send it again
+        unconditionally.
         """
         kind, channel = self._resolve(logical_name)
         if kind != "nitro":
@@ -275,10 +289,12 @@ class RGBController:
             self._aura.enter_direct(channel)
             return
         assert self._nitro is not None
-        self._nitro.set_external(True)
+        self._nitro.set_external(False)
+        self._nitro.set_mode(_nitro.MODE_CUSTOM)
         time.sleep(DIRECT_SETTLE)
-        self._nitro.set_external(True)
-        self._nitro_external = True
+        self._nitro.set_external(False)
+        self._nitro.set_mode(_nitro.MODE_CUSTOM)
+        self._nitro_external = False
         self._nitro_firmware = None
 
     def write_frame(self, logical_name: str,
@@ -290,11 +306,15 @@ class RGBController:
             if not frame:
                 return
             # One controllable LED: the frame's head pixel is the whole zone.
-            # External control is ensured, not assumed — a card left in a
-            # firmware effect would otherwise ignore every colour sent.
-            if self._nitro_external is not True:
-                self._nitro.set_external(True)
-                self._nitro_external = True
+            # Rendered colours show with external control off + CUSTOM — the
+            # combination `prepare_zone_for_direct_render` leaves behind.
+            # External control *on* blanks the bar outright (filmed), so it
+            # is ensured off, not on, here: a card left in a firmware effect
+            # would otherwise ignore every colour sent.
+            if self._nitro_external is not False:
+                self._nitro.set_external(False)
+                self._nitro.set_mode(_nitro.MODE_CUSTOM)
+                self._nitro_external = False
                 self._nitro_firmware = None
             r, g, b = (int(c) for c in frame[0])
             self._nitro.set_colour((r, g, b))

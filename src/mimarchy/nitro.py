@@ -15,14 +15,20 @@ address, so there is nothing else to port:
 The card exposes one controllable LED for a bar with many physical segments,
 so per-LED rendering is one colour (`SetColor` writes R/G/B registers) and
 spatial effects go to firmware (rainbow/runway/spectrum), which is the
-routing `lightd.plan` already implements. Two quirks preserved from the
+routing `lightd.plan` already implements. Rendered colours show only with
+external control *off* and mode `CUSTOM` (0x06) — filmed on this card:
+`ext=1` blanks the bar whatever the colour registers hold, while
+`ext=0` + `CUSTOM` lights it in the register colour. That is also what
+OpenRGB's `DeviceUpdateMode` does for its Static mode (`SetExternalControl`
+(false) then `SetMode(CUSTOM)`), and what its External Control mode undoes
+(`SetExternalControl(true)`, no mode write). Two quirks preserved from the
 OpenRGB-backed driver, both measured against this card:
 
-* entering a firmware effect via a direct-mode bounce (`External Control`
-  off first, 0.4 s settle) lands reliably; a direct firmware-to-firmware
-  switch was dropped about half the time.
-* leaving a firmware effect for direct rendering needs the bounce twice —
-  a single `External Control` write was dropped 5 of 5 times.
+* entering a firmware effect via an external-control bounce (`External`
+  Control on first, 0.4 s settle, then off + mode) lands reliably; a direct
+  firmware-to-firmware switch was dropped about half the time.
+* leaving a firmware effect for direct rendering needs the off + CUSTOM
+  pair twice — a single write was dropped 5 of 5 times.
 """
 
 from __future__ import annotations

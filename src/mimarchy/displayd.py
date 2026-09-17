@@ -25,15 +25,14 @@ from mimarchy.service import (claim_pidfile, clear_note, owner_pid, write_note)
 
 
 def build_frame() -> DisplayFrame:
-    # No CPU-fan source exists on this machine right now: the nct6687 chip
-    # is absent (needs the out-of-tree nct6687d driver with force=1 plus
-    # acpi_enforce_resources=lax; see docs/hardware-notes.md), the 'asus'
-    # node exports no sensor files, and the only fan input anywhere is the
-    # discrete GPU's own fan1 — never the CPU fan. So read_cpu_fan_rpm()
-    # returns None and the wire value stays 0: the 64-byte frame has no
-    # "unknown" encoding, and the panel truncates to the nearest 100, so 0
-    # renders as 0. `mimarchy-ctl status` still reports null for the fan
-    # (it forwards the None, not this 0), which is where "—" lives.
+    # The RPM comes from read_cpu_fan_rpm(): nct6687's "CPU Fan" (the
+    # out-of-tree nct6687d driver, force=1 plus acpi_enforce_resources=lax;
+    # see docs/hardware-notes.md). The 64-byte frame has no "unknown"
+    # encoding, so a missing reading (None, e.g. driver not loaded) still
+    # sends 0 on the wire and the panel truncates to the nearest 100, which
+    # renders as 0. `mimarchy-ctl status` forwards the None, not this 0,
+    # which is where "—" lives. The GPU's own fan1 is never the CPU fan
+    # (see hwmon.read_cpu_fan_rpm).
     return DisplayFrame(
         cpu_temp=read_cpu_temp() or 0,
         cpu_load=read_cpu_load(),
