@@ -85,6 +85,15 @@ ONE_LED_FPS = 10.0
 #: noticed while someone is still looking at them.
 WRITE_FAILURE_WINDOW = 5.0
 
+#: How often a device-mode switch that failed is retried.
+#:
+#: Switching a controller into direct-render or firmware mode is slow on this
+#: card and occasionally drops a packet, so retrying one on every frame at
+#: 30 fps would spend more time negotiating modes than lighting. A second is
+#: far longer than any transient worth riding out and short enough that a
+#: daemon which merely lost one switch looks settled almost immediately.
+TRANSITION_RETRY = 1.0
+
 
 class WriteFailureWatch:
     """Decides when continuous write failure means the connection is dead.
@@ -121,6 +130,63 @@ class WriteFailureWatch:
         if self._failing_since is None:
             self._failing_since = t
         return (t - self._failing_since) >= self._window
+
+
+class TransitionWatch:
+    """Decides when a device-mode switch that keeps failing is not going to.
+
+    Putting a controller into direct-render mode is the step that decides
+    whether the frames this daemon renders are the frames the hardware shows,
+    and it fails in the worst possible way: silently. `write_frame` keeps
+    succeeding afterwards, because the port is open and the packets land — they
+    are simply interpreted as colours for whatever mode the board is already
+    in. So the daemon rendered happily into a board running its own firmware
+    effect, `WriteFailureWatch` was fed by those successful writes, `ctl
+    status` reported `lighting: running`, and the LEDs showed something nobody
+    asked for. That is the failure the whole direct-drive design exists to
+    prevent, arriving through the mode switch instead of around it.
+
+    A failed switch used to be left to "the next change", and on a rig not
+    running Unhinged there is no next change: the plan was only re-applied when
+    the state file's mtime moved or the firmware rotation turned. One transient
+    error at startup was therefore permanent.
+
+    This is the same bargain `WriteFailureWatch` makes, for the same reason and
+    with the same way out. Retries run on a bounded cadence rather than every
+    frame, so a switch that is merely slow is not hammered, and the caller
+    exits once a zone has been failing for a full window — which the panel's
+    supervision answers by reconnecting, the one path that re-prepares zones
+    and re-applies state.
+    """
+
+    def __init__(self, retry: float = TRANSITION_RETRY,
+                 window: float = WRITE_FAILURE_WINDOW):
+        self._retry = retry
+        self._window = window
+        self._state: dict[str, tuple[float, float]] = {}
+
+    def due(self, key: str, t: float) -> bool:
+        """True when `key` has no switch pending, or its last attempt is old
+        enough to try again. A zone already in the right mode never asks."""
+        last = self._state.get(key)
+        return last is None or (t - last[1]) >= self._retry
+
+    def failed(self, key: str, t: float) -> None:
+        """Record a failed attempt, keeping the streak's start if one is already
+        running — the window measures how long the switch has been impossible,
+        not how many attempts it has taken to find that out."""
+        since = self._state[key][0] if key in self._state else t
+        self._state[key] = (since, t)
+
+    def ok(self, key: str) -> None:
+        self._state.pop(key, None)
+
+    def stuck(self, t: float) -> list[str]:
+        """Zones whose switch has now been failing for a full window, in a
+        stable order so the note a caller writes from this reads the same way
+        twice."""
+        return sorted(key for key, (since, _last) in self._state.items()
+                      if (t - since) >= self._window)
 
 
 class FrameGate:
@@ -347,6 +413,50 @@ def plan(rgb: RGBController, zones: dict[str, int],
     return rendered, firmware
 
 
+def apply_transitions(rgb, rendered, firmware, applied, transitions, gate, t) -> None:
+    """Put each device where its half of the plan needs it.
+
+    Modes are set only when they actually change: switching them is slow on
+    this card and occasionally drops a packet, so re-sending one every state
+    change would make the GPU visibly stutter. A zone already sitting in the
+    mode its half of the plan needs is skipped without touching the hardware.
+
+    A switch that raises is retried on `transitions`' cadence instead of being
+    left to the next plan. That is the whole point of taking `t` and being
+    callable on a tick where nothing changed: the frames after a failed switch
+    still write cleanly to a controller that is ignoring them, so nothing else
+    in the loop would ever ask again, and `applied` is deliberately *not* set
+    on the failure path so the zone stays a candidate.
+
+    `applied` is mutated in place — it is the daemon's memory of which mode
+    each zone is in, and a zone only stops being a candidate once a switch has
+    actually landed.
+    """
+    for key in rendered:
+        if applied.get(key) != ("render",) and transitions.due(key, t):
+            try:
+                rgb.prepare_zone_for_direct_render(key)
+            except Exception:  # noqa: BLE001 — the watch decides when this is fatal
+                transitions.failed(key, t)
+                continue
+            transitions.ok(key)
+            applied[key] = ("render",)
+            # Re-preparing can reset the controller's colours underneath us, so
+            # the gate's memory of what was last sent is no longer true.
+            gate.forget(key)
+    for key, spec in firmware.items():
+        if applied.get(key) == ("firmware", *spec) or not transitions.due(key, t):
+            continue
+        effect, speed, colour = spec
+        try:
+            rgb.set_mode(key, effect, colour=colour, speed=speed)
+        except Exception:  # noqa: BLE001 — the watch decides when this is fatal
+            transitions.failed(key, t)
+            continue
+        transitions.ok(key)
+        applied[key] = ("firmware", *spec)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--fps", type=float, default=FPS)
@@ -405,33 +515,7 @@ def main() -> None:
     rendered, firmware = plan(rgb, zones, state, 0.0)
     last_rotation = rotation(zones, state, 0.0)
     applied: dict[str, tuple] = {}
-
-    def apply_plan() -> None:
-        """Put each device where its half of the plan needs it.
-
-        Firmware modes are set only when they actually change: switching them is
-        slow on this card and occasionally drops a packet, so re-sending one
-        every state change would make the GPU visibly stutter.
-        """
-        for key, (target, _count) in rendered.items():
-            if applied.get(key) != ("render",):
-                try:
-                    rgb.prepare_zone_for_direct_render(key)
-                except Exception:  # noqa: BLE001 — retried on the next change
-                    continue
-                applied[key] = ("render",)
-                gate.forget(key)
-        for key, spec in firmware.items():
-            if applied.get(key) == ("firmware", *spec):
-                continue
-            effect, speed, colour = spec
-            try:
-                rgb.set_mode(key, effect, colour=colour, speed=speed)
-            except Exception:  # noqa: BLE001 — retried on the next change
-                continue
-            applied[key] = ("firmware", *spec)
-
-    apply_plan()
+    transitions = TransitionWatch()
 
     watch = WriteFailureWatch()
     period = 1.0 / max(args.fps, 1.0)
@@ -452,7 +536,22 @@ def main() -> None:
                 turn = rotation(zones, state, t)
             last_rotation = turn
             rendered, firmware = plan(rgb, zones, state, t)
-            apply_plan()
+
+        # Every tick, not only when the plan moved: a mode switch that failed is
+        # invisible from out here, because the frames after it keep writing
+        # cleanly to a controller that is ignoring them.
+        apply_transitions(rgb, rendered, firmware, applied, transitions, gate, t)
+
+        stuck = transitions.stuck(t)
+        if stuck:
+            message = (f"could not put {', '.join(stuck)} into the mode the plan "
+                       f"needs after {WRITE_FAILURE_WINDOW:g}s of retrying — the "
+                       "controller is accepting writes but not mode changes, so "
+                       "the frames are being read as colours for whatever mode it "
+                       "is already in. Treating the handle as gone and exiting, so "
+                       "the panel restarts this daemon into fresh opens")
+            write_note("lightd", message)
+            sys.exit(message)
 
         wrote = failed = 0
         for key, (target, count) in rendered.items():
