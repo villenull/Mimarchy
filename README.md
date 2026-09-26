@@ -101,6 +101,43 @@ nothing else was ever installed outside the plugin folder.
 Requires Python 3.11+ and a running Wayland session; the backend itself is
 stdlib-only, so there is nothing else to install. Fan RPM additionally needs
 the out-of-tree `nct6687d` driver — temperatures and lighting work without it.
+Until it is loaded, `mimarchy-ctl status` says so by name rather than dropping
+the reading:
+
+    fan: NOT DETECTED — the nct6687d driver is not loaded, so no CPU fan
+    sensor exists
+
+That is a kernel module, so the plugin cannot install it: there is no root at
+`omarchy plugin add` time, and the kernel command line is only read at boot.
+It is three commands and a reboot:
+
+```bash
+sudo pacman -S --needed dkms base-devel
+yay -S nct6687d-dkms-git
+printf 'nct6687\n' | sudo tee /etc/modules-load.d/nct6687.conf >/dev/null
+```
+
+Then add two arguments to the kernel command line and reboot:
+
+    nct6687.force=1 acpi_enforce_resources=lax
+
+`force=1` is required — the driver gates on a vendor allowlist this board is
+not on and otherwise refuses. `acpi_enforce_resources=lax` keeps ACPI from
+holding the Super I/O ports exclusively. The Super I/O chip has no PCI
+modalias, so without the `modules-load.d` line the module never loads at all.
+
+**Where those arguments go depends on the bootloader**, and this is the part
+that is easy to get wrong. `/etc/kernel/cmdline` is authoritative only for
+systemd-boot. On a limine system, `limine.conf` is regenerated from the
+*running* kernel's `/proc/cmdline`, and the same is true of the unified kernel
+image when `/etc/mkinitcpio.conf` sets no `kernel_cmdline` — so editing
+`/etc/kernel/cmdline` alone changes nothing that boot actually uses. Put the
+arguments in the `cmdline:` line of the entry you boot. Once one boot has
+taken them, `/proc/cmdline` carries them and every later regeneration
+inherits them.
+
+Check it worked with `sensors | grep -A3 nct6687`, which should show a
+`CPU Fan` line. The cooler display rounds RPM to the nearest 100.
 
 > History note: up to 0.4.5 the lighting went through the OpenRGB SDK server.
 > Since 0.5.0 both controllers are driven directly — raw hidraw writes for

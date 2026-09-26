@@ -156,6 +156,21 @@ def read_cpu_fan_rpm(data: dict | None = None) -> float | None:
     return None
 
 
+def nct6687_present(data: dict | None = None) -> bool:
+    """Whether the nct6687 Super I/O chip is exposed at all.
+
+    The chip only appears once the out-of-tree driver is loaded, so this is
+    the difference between a fan that is stopped and a fan that nothing is
+    reading. `read_cpu_fan_rpm` cannot tell them apart — it returns None for
+    both, because a loaded chip reporting 0 rpm and an absent chip are the
+    same one line of output. They are not the same problem, and the fix is
+    only obvious once you know which one you have: one needs a reboot, the
+    other needs the driver.
+    """
+    readings = data if data is not None else _read_sensors_json()
+    return any(chip.startswith("nct6687") for chip in readings)
+
+
 def read_cpu_load() -> int:
     """Whole-CPU utilisation percentage, sampled over a short interval."""
     def _busy_total() -> tuple[int, int]:

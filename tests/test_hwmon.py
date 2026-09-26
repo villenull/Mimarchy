@@ -134,3 +134,47 @@ class TestCpuFanSource:
                                  "edge": {"temp1_input": 40.0}}}))
 
         assert hwmon.read_cpu_fan_rpm() is None
+
+
+class TestChipPresence:
+    """Whether the chip exists at all, which no reading can report.
+
+    `read_cpu_fan_rpm` answers None for a stopped fan and for an absent driver
+    alike. The two need opposite responses from the user — one is a package
+    and a reboot, the other is nothing — so something has to tell them apart,
+    and it cannot be inferred from the absence of a number.
+    """
+
+    def test_present_when_the_chip_is_exposed(self, monkeypatch):
+        fake_sensors(monkeypatch, stdout=json.dumps(SENSORS))
+
+        assert hwmon.nct6687_present() is True
+
+    def test_absent_without_the_driver(self, monkeypatch):
+        fake_sensors(monkeypatch, stdout=json.dumps(
+            {"k10temp-pci-00c3": {"Tctl": {"temp1_input": 52.2}},
+             "amdgpu-pci-0300": {"fan1": {"fan1_input": 0}}}))
+
+        assert hwmon.nct6687_present() is False
+
+    def test_present_even_when_the_fan_reads_zero(self, monkeypatch):
+        """A stopped fan is still a loaded driver — the distinction `status`
+        turns into "nothing to do" versus "install a package"."""
+        fake_sensors(monkeypatch, stdout=json.dumps(
+            {"nct6687-isa-0a20": {"CPU Fan": {"fan1_input": 0}}}))
+
+        assert hwmon.read_cpu_fan_rpm() is None
+        assert hwmon.nct6687_present() is True
+
+    def test_absent_when_sensors_cannot_be_read(self, monkeypatch):
+        """No `sensors` at all is the same silence, and must not raise."""
+        fake_sensors(monkeypatch, raises=FileNotFoundError)
+
+        assert hwmon.nct6687_present() is False
+
+    def test_tolerates_a_pre_read_snapshot(self, monkeypatch):
+        """`status` reads `sensors` once and passes the snapshot down, so this
+        must not spawn a second one."""
+        fake_sensors(monkeypatch, raises=AssertionError("re-spawned sensors"))
+
+        assert hwmon.nct6687_present(SENSORS) is True
